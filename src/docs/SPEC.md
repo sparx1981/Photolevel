@@ -1,6 +1,6 @@
 # PhotoLevel Product Specification
 
-> **Last Updated:** 2026-04-29 | **Changed:** Upgraded to Gemini 2.5 Flash Preview; added strict AI platform placement guidelines (avoiding reflections/underside); restructured game initialization sequence for pixel-perfect background alignment.
+> **Last Updated:** 2026-04-29 | **Changed:** Implemented hybrid AI pipeline combining client-side Sobel edge detection (Canvas API) with Gemini classification to achieve pixel-perfect platform alignment.
 
 ## Architecture Overview
 PhotoLevel is a browser-based 2D platformer where levels are dynamically designed by Gemini AI by identifying real-world surfaces in user-uploaded images and transforming them into playable platforms. Levels feature progressive difficulty scaling on replay.
@@ -8,21 +8,22 @@ PhotoLevel is a browser-based 2D platformer where levels are dynamically designe
 - **Frontend:** React + Tailwind CSS
 - **Game Engine:** PixiJS v8
 - **Physics:** Matter.js v0.20 (Rotated slab physics with high-fidelity collision)
-- **AI Integration:** Google Gemini SDK (gemini-2.5-flash-preview-04-17) using methodical horizontal banding, normalized coordinates, and perspective correction.
+- **AI Integration:** Hybrid pipeline using client-side Edge Detection + Google Gemini SDK (gemini-2.0-flash-exp). Coordinates are pixel-measured before being sent to AI for logical classification.
 
 ## File Structure
 - `src/App.tsx`: Main application container, state management, and difficulty progression.
 - `src/GameCore.ts`: Primary game engine handling rotated platforms, fragile states, enemies, camera clamping, and responsive scaling.
 - `src/utils/imageCrop.ts`: Image dimension validation.
-- `src/services/geminiService.ts`: AI prompt engineering for surface detection with perspective-aware alignment and reflection avoidance.
+- `src/utils/edgeDetection.ts`: Client-side Sobel/Hough horizontal edge extractor.
+- `src/services/geminiService.ts`: Hybrid pipeline orchestrator that passes pixel-accurate edges to Gemini for classification.
 - `src/types.ts`: Shared TypeScript interfaces including difficulty configurations.
 
 ## Game Logic: Surface Alignment
-1. **Methodical Scanning:** Gemini scans the image in four horizontal bands (Top, Upper-Mid, Lower-Mid, Bottom) to ensure full vertical coverage.
-2. **Normalized Coordinates:** AI estimates positions as fractions (0.0–1.0) of image width/height for higher spatial accuracy.
-3. **Perspective Correction:** AI logic corrects for focal convergence and camera tilt, ensuring platforms align with the *walkable* top edge of surfaces.
-4. **Collision Avoidance:** Prompt guidelines strictly forbid placement on reflections in glass/mirrors, underside of surfaces, or on construction lines.
-5. **Traversability:** AI ensures a reachable path from spawn (bottom-left) to exit (top-right) by adding bridge platforms where gaps exceed threshold values.
+1. **Edge Detection (Pixel-Level):** A Sobel horizontal gradient filter runs on a hidden canvas to extract high-contrast horizontal line segments. This provides the *exact* physical location of potential platforms.
+2. **AI Classification:** The detected line data (normX, normY, normWidth) is sent to Gemini alongside the image. Gemini's role is narrowed to *classification*: deciding if a line is a real walkable surface, assigning themes/labels, and adding bridges.
+3. **Accuracy Enforcement:** Gemini is forbidden from modifying detected coordinates (±0.02 tolerance max), virtually eliminating coordinate "drift" and floating platforms.
+4. **Collision Avoidance:** Guidelines strictly forbid placement on reflections, reflections in mirrors, or the underside of surfaces.
+5. **Traversability:** AI ensures a reachable path from spawn to exit by adding bridges where gaps exceed threshold values.
 
 ## Progressive Difficulty
 Replaying a photo increments the difficulty level, applying the following modifiers:

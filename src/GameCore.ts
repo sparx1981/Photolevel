@@ -42,6 +42,9 @@ export class GameCore {
   private camY = 0;
   private playerSpawnTime = 0;
 
+  private squashTimer = 0;
+  private prevGroundedForSquash = false;
+
   private onWin: (time: number) => void;
   private onDeath: () => void;
 
@@ -318,15 +321,18 @@ export class GameCore {
   ) {
     gfx.clear();
     const alpha = isFragile ? 0.65 : 1.0;
-    gfx.rect(-width / 2, -2, width, 3);
+    // Top highlight strip — rounded ends, thin
+    gfx.roundRect(-width / 2, -2, width, 3, 1.5);
     gfx.fill({ color: isFragile ? 0xff8844 : colours.highlight, alpha: alpha * 0.95 });
-    gfx.rect(-width / 2, 1, width, 6);
-    gfx.fill({ color: colours.top, alpha: alpha * 0.70 });
-    gfx.rect(-width / 2, 7, width, 5);
+    // Body fill — rounded pill shape for clean ends
+    gfx.roundRect(-width / 2, 1, width, 6, 3);
+    gfx.fill({ color: colours.top, alpha: alpha * 0.72 });
+    // Depth/underside strip — rounded ends
+    gfx.roundRect(-width / 2, 7, width, 5, 2.5);
     gfx.fill({ color: colours.side, alpha: alpha * 0.85 });
+    // Fragile dashes unchanged
     if (isFragile) {
-      const dashW = 12;
-      const gapW  = 6;
+      const dashW = 12, gapW = 6;
       let cx = -width / 2;
       while (cx < width / 2) {
         const dw = Math.min(dashW, width / 2 - cx);
@@ -340,34 +346,114 @@ export class GameCore {
   private createPlayer() {
     const spawn = this.levelData.spawn || { x: 100, y: 100 };
     this.player = Matter.Bodies.rectangle(spawn.x, spawn.y, 30, 50, {
-      friction: 0.02,
-      frictionAir: 0.02,
-      restitution: 0,
-      inertia: Infinity,
-      label: "player",
+      friction: 0.02, frictionAir: 0.02, restitution: 0,
+      inertia: Infinity, label: "player"
     });
     Matter.Composite.add(this.engine.world, [this.player]);
 
-    const graphics = new PIXI.Graphics();
-    graphics.roundRect(-15, -25, 30, 50, 8);
-    graphics.fill({ color: 0xffffff });
-    graphics.rect(-10, -18, 20, 12);
-    graphics.fill({ color: 0x333333 });
-    graphics.rect(-18, -10, 6, 25);
-    graphics.fill({ color: 0xcccccc });
+    const g = new PIXI.Graphics();
 
-    this.playerSprite = graphics;
+    // ── Ground shadow ellipse ──────────────────────────────────────────────
+    g.ellipse(0, 26, 13, 3.5);
+    g.fill({ color: 0x000000, alpha: 0.16 });
+
+    // ── Boots ─────────────────────────────────────────────────────────────
+    g.roundRect(-12, 18, 11, 9, 3);
+    g.fill({ color: 0x0D1A30 });
+    g.roundRect(1, 18, 11, 9, 3);
+    g.fill({ color: 0x0D1A30 });
+    // Boot highlights
+    g.roundRect(-11, 19, 4, 3, 1.5);
+    g.fill({ color: 0x2A3A5A, alpha: 0.7 });
+    g.roundRect(2, 19, 4, 3, 1.5);
+    g.fill({ color: 0x2A3A5A, alpha: 0.7 });
+
+    // ── Legs ──────────────────────────────────────────────────────────────
+    g.roundRect(-10, 8, 8, 12, 3);
+    g.fill({ color: 0x1A2744 });
+    g.roundRect(2, 8, 8, 12, 3);
+    g.fill({ color: 0x1A2744 });
+
+    // ── Body ──────────────────────────────────────────────────────────────
+    g.roundRect(-13, -8, 26, 18, 7);
+    g.fill({ color: 0xF0EBE2 });          // warm off-white vinyl
+    // Body left-side highlight (rim light)
+    g.roundRect(-12, -6, 8, 12, 4);
+    g.fill({ color: 0xFFFFFF, alpha: 0.45 });
+    // Chest panel
+    g.roundRect(-7, -3, 14, 9, 3);
+    g.fill({ color: 0xE0D9CE });
+    // Chest panel inner glow accent
+    g.roundRect(-5, -2, 10, 7, 2);
+    g.fill({ color: 0x00C8F0, alpha: 0.22 });
+    // Body bottom shadow
+    g.roundRect(-12, 6, 24, 4, 3);
+    g.fill({ color: 0x00000000 & 0xD4CCBf, alpha: 0.18 });
+
+    // ── Right arm (visible in side profile) ───────────────────────────────
+    g.roundRect(12, -6, 6, 12, 3);
+    g.fill({ color: 0xE0D9CE });
+    g.roundRect(12, 4, 6, 5, 2);
+    g.fill({ color: 0x1A2744 });         // glove
+
+    // ── Collar / neck ring ─────────────────────────────────────────────────
+    g.roundRect(-9, -10, 18, 5, 2);
+    g.fill({ color: 0x1A2744 });
+
+    // ── Helmet ────────────────────────────────────────────────────────────
+    g.roundRect(-13, -30, 26, 22, 10);
+    g.fill({ color: 0x1A2744 });
+    // Helmet top highlight (surface gloss)
+    g.roundRect(-10, -29, 14, 7, 5);
+    g.fill({ color: 0x2E4A7A, alpha: 0.65 });
+    // Helmet chin/lower rim
+    g.roundRect(-13, -11, 26, 3, 1);
+    g.fill({ color: 0x0D1530 });
+
+    // ── Visor ─────────────────────────────────────────────────────────────
+    g.roundRect(-9, -26, 18, 13, 5);
+    g.fill({ color: 0x00C8F0 });          // electric cyan
+    // Visor inner layer (depth)
+    g.roundRect(-8, -25, 16, 11, 4);
+    g.fill({ color: 0x40DEFF, alpha: 0.55 });
+    // Eyes — expressive white dots
+    g.circle(-3, -19, 2.8);
+    g.fill({ color: 0xFFFFFF });
+    g.circle(4.5, -19, 2.8);
+    g.fill({ color: 0xFFFFFF });
+    // Pupils
+    g.circle(-2.5, -19, 1.3);
+    g.fill({ color: 0x001840 });
+    g.circle(5, -19, 1.3);
+    g.fill({ color: 0x001840 });
+    // Visor gloss reflection
+    g.roundRect(-7, -25, 7, 4, 2);
+    g.fill({ color: 0xFFFFFF, alpha: 0.35 });
+
+    // ── Antenna ────────────────────────────────────────────────────────────
+    g.roundRect(-2, -34, 4, 6, 2);
+    g.fill({ color: 0x2A3A5A });
+    // Antenna glow orb
+    g.circle(0, -36, 4);
+    g.fill({ color: 0xFFCC44 });         // warm gold
+    g.circle(0, -36, 2);
+    g.fill({ color: 0xFFEEAA });         // bright centre
+
+    this.playerSprite = g;
     this.worldContainer.addChild(this.playerSprite);
 
+    // Jump indicator pip (above character when airborne)
     this.jumpIndicator = new PIXI.Graphics();
     this.worldContainer.addChild(this.jumpIndicator);
 
+    // Spawn arrow hint
     this.spawnArrow = new PIXI.Graphics();
     this.spawnArrow.poly([0, -10, 10, 10, -10, 10]);
     this.spawnArrow.fill({ color: 0x60c8ff });
     this.worldContainer.addChild(this.spawnArrow);
 
     this.playerSpawnTime = Date.now();
+    console.log(`[GameCore] Player spawned at x=${spawn.x} y=${spawn.y}`);
   }
 
   private spawnEnemies() {
@@ -445,29 +531,85 @@ export class GameCore {
   private createExit() {
     const exit = this.levelData.exit || { x: 1200, y: 100 };
     this.exitGraphics = new PIXI.Graphics();
-    this.exitGraphics.circle(0, 0, 30);
-    this.exitGraphics.fill({ color: 0x00ff00, alpha: 0.3 });
-    this.exitGraphics.stroke({ color: 0x00ff00, width: 2 });
-    this.exitGraphics.circle(0, 0, 10);
-    this.exitGraphics.fill({ color: 0x00ff00 });
-    this.exitGraphics.position.set(exit.x, exit.y);
-    this.worldContainer.addChild(this.exitGraphics);
+    const g = this.exitGraphics;
+
+    const dW = 44;       // door width
+    const aR = 22;       // arch radius = dW/2
+    const rectH = 52;    // height of rectangular section below arch
+    // Total door height = rectH + aR = 74px, sitting on platform surface (y=0)
+
+    // ── Outer atmospheric glow ──────────────────────────────────────────
+    g.moveTo(-dW / 2 - 10, 2);
+    g.lineTo(-dW / 2 - 10, -rectH);
+    g.arc(0, -rectH, aR + 10, Math.PI, 0, false);
+    g.lineTo(dW / 2 + 10, 2);
+    g.fill({ color: 0x00ff88, alpha: 0.07 });
+
+    // ── Portal interior fill ─────────────────────────────────────────────
+    g.moveTo(-dW / 2, 0);
+    g.lineTo(-dW / 2, -rectH);
+    g.arc(0, -rectH, aR, Math.PI, 0, false);
+    g.lineTo(dW / 2, 0);
+    g.fill({ color: 0x00ff88, alpha: 0.18 });
+
+    // ── Inner glow brighten ──────────────────────────────────────────────
+    g.moveTo(-dW / 2 + 7, -4);
+    g.lineTo(-dW / 2 + 7, -rectH);
+    g.arc(0, -rectH, aR - 7, Math.PI, 0, false);
+    g.lineTo(dW / 2 - 7, -4);
+    g.fill({ color: 0x00ff88, alpha: 0.14 });
+
+    // ── Door frame — arch outline ────────────────────────────────────────
+    g.moveTo(-dW / 2, 2);
+    g.lineTo(-dW / 2, -rectH);
+    g.arc(0, -rectH, aR, Math.PI, 0, false);
+    g.lineTo(dW / 2, 2);
+    g.stroke({ color: 0x00ff88, width: 3.5, alpha: 0.95 });
+
+    // ── Floor threshold sill ────────────────────────────────────────────
+    g.roundRect(-dW / 2 - 4, -2, dW + 8, 4, 2);
+    g.fill({ color: 0x00ff88, alpha: 0.8 });
+
+    // ── Left & right door posts (vertical lines for depth) ──────────────
+    g.rect(-dW / 2 - 3, -rectH, 3, rectH + 2);
+    g.fill({ color: 0x00ff88, alpha: 0.6 });
+    g.rect(dW / 2, -rectH, 3, rectH + 2);
+    g.fill({ color: 0x00ff88, alpha: 0.6 });
+
+    // ── Upward chevron icon (signals exit direction) ─────────────────────
+    const cy = -rectH * 0.48;
+    g.poly([0, cy - 12, 10, cy + 2, 6, cy + 2, 6, cy + 12, -6, cy + 12, -6, cy + 2, -10, cy + 2]);
+    g.fill({ color: 0x00ff88, alpha: 0.65 });
+
+    g.position.set(exit.x, exit.y);
+    this.worldContainer.addChild(g);
+    console.log(`[GameCore] Exit door placed at x=${exit.x} y=${exit.y}`);
   }
 
   private update(delta: number) {
     if (!this.player || !this.initialized) return;
 
-    const dtMs = (1000 / 60) * delta;
+    // Cap delta to prevent physics instability on slow frames and suppress Matter.js warning
+    const dtMs = Math.min((1000 / 60) * delta, 16.667);
 
     this.fragilePlatforms.forEach((fp, key) => {
       switch (fp.state) {
         case "solid": {
           if (this.player) {
+            const px = this.player.position.x;
             const feetY = this.player.position.y + 25;
-            const hit = Matter.Query.ray([fp.body], { x: this.player.position.x, y: feetY }, { x: this.player.position.x, y: feetY + 8 });
-            if (hit.length > 0 && this.isGrounded) {
+            // Fan of 5 rays to catch angled platform contact
+            const rayXOffsets = [-12, -6, 0, 6, 12];
+            const hit = rayXOffsets.some(dx =>
+              Matter.Query.ray([fp.body],
+                { x: px + dx, y: feetY },
+                { x: px + dx, y: feetY + 10 }
+              ).length > 0
+            );
+            if (hit && this.isGrounded) {
               fp.state = "cracking";
               fp.timer = this.difficulty.fragileCrackMs;
+              console.log(`[GameCore] Fragile platform "${key}" cracking`);
             }
           }
           break;
@@ -524,6 +666,32 @@ export class GameCore {
     Matter.Engine.update(this.engine, dtMs);
     this.playerSprite.position.set(this.player.position.x, this.player.position.y);
 
+    // ── Squash & stretch ─────────────────────────────────────────────────────
+    const justLanded = this.isGrounded && !this.prevGroundedForSquash;
+    this.prevGroundedForSquash = this.isGrounded;
+
+    if (justLanded) {
+      this.squashTimer = 160;
+    }
+    if (this.squashTimer > 0) {
+      this.squashTimer -= dtMs;
+      const t = Math.max(0, this.squashTimer / 160);
+      // Squash on land, ease back to normal
+      this.playerSprite!.scale.set(1.0 + 0.22 * t, 1.0 - 0.18 * t);
+    } else if (!this.isGrounded && this.player.velocity.y < -1) {
+      // Stretch when jumping upward
+      const stretch = Math.min(0.18, Math.abs(this.player.velocity.y) * 0.015);
+      this.playerSprite!.scale.set(1.0 - stretch * 0.6, 1.0 + stretch);
+    } else if (!this.isGrounded && this.player.velocity.y > 3) {
+      // Stretch when falling
+      const stretch = Math.min(0.14, this.player.velocity.y * 0.012);
+      this.playerSprite!.scale.set(1.0 - stretch * 0.5, 1.0 + stretch);
+    } else {
+      // Lerp back to normal
+      this.playerSprite!.scale.x += (1.0 - this.playerSprite!.scale.x) * 0.25;
+      this.playerSprite!.scale.y += (1.0 - this.playerSprite!.scale.y) * 0.25;
+    }
+
     if (this.jumpIndicator) {
       this.jumpIndicator.clear();
       const hasAirJump = this.airJumpsUsed < this.MAX_AIR_JUMPS && !this.isGrounded;
@@ -573,7 +741,7 @@ export class GameCore {
 
     this.isWallSliding = (onLeftWall || onRightWall) && !this.isGrounded && this.player.velocity.y > 0;
     this.wallDirection = onLeftWall ? -1 : (onRightWall ? 1 : 0);
-    if (this.isWallSliding && this.player.velocity.y > 2.5) Matter.Body.setVelocity(this.player, { x: this.player.velocity.x, y: 2.5 });
+    if (this.isWallSliding && this.player.velocity.y > 1.8) Matter.Body.setVelocity(this.player, { x: this.player.velocity.x, y: 1.8 });
 
     if (this.isGrounded) this.coyoteTimer = 0; else this.coyoteTimer += dtMs;
     this.jumpBufferTimer -= dtMs;
@@ -583,12 +751,12 @@ export class GameCore {
     
     if (jumpJustPressed) {
       if (this.isGrounded || this.coyoteTimer < 140) {
-        Matter.Body.setVelocity(this.player, { x: this.player.velocity.x, y: -14 });
+        Matter.Body.setVelocity(this.player, { x: this.player.velocity.x, y: -8.5 });
         this.coyoteTimer = 999;
         this.jumpPressed = true;
         this.jumpBufferTimer = 0;
       } else if (this.airJumpsUsed < this.MAX_AIR_JUMPS && !this.isWallSliding) {
-        Matter.Body.setVelocity(this.player, { x: this.player.velocity.x, y: -12 });
+        Matter.Body.setVelocity(this.player, { x: this.player.velocity.x, y: -7 });
         this.airJumpsUsed++;
         this.jumpPressed = true;
         this.doubleJumpFlash = 180;
@@ -653,15 +821,52 @@ export class GameCore {
     return Math.floor((Date.now() - this.playerSpawnTime) / 1000);
   }
 
+  public refreshLevel(newLevelData: LevelData): void {
+    console.log("[GameCore] Refreshing level with refined data...");
+
+    // Remove all existing static physics bodies (platforms/walls)
+    const bodiesToRemove = Matter.Composite.allBodies(this.engine.world)
+      .filter(b => b.isStatic && b.label !== "hard_floor");
+    bodiesToRemove.forEach(b => Matter.Composite.remove(this.engine.world, b));
+
+    // Remove all PIXI children except background (index 0), player, exit, spawn arrow
+    // Keep indices 0 (bg) and rebuild the rest
+    const childrenToKeep = [
+      this.playerSprite,
+      this.exitGraphics,
+      this.spawnArrow,
+      this.jumpIndicator
+    ].filter(Boolean);
+
+    this.worldContainer.children
+      .filter(c => !childrenToKeep.includes(c as any))
+      .slice(1) // keep bg at index 0
+      .forEach(c => this.worldContainer.removeChild(c));
+
+    // Clear fragile tracking and enemies
+    this.fragilePlatforms.clear();
+    this.enemies.forEach(e => Matter.Composite.remove(this.engine.world, e.body));
+    this.enemies = [];
+
+    // Rebuild with new level data
+    this.levelData = newLevelData;
+    this.buildPhysics();
+    this.spawnEnemies();
+
+    // Move player back to spawn
+    this.respawn();
+    console.log("[GameCore] Level refresh complete");
+  }
+
   private jump() {
     if (!this.player) return;
-    Matter.Body.setVelocity(this.player, { x: this.player.velocity.x, y: -14 });
+    Matter.Body.setVelocity(this.player, { x: this.player.velocity.x, y: -8.5 });
     this.isGrounded = false;
   }
 
   private wallJump() {
     if (!this.player) return;
-    Matter.Body.setVelocity(this.player, { x: -this.wallDirection * 9, y: -13 });
+    Matter.Body.setVelocity(this.player, { x: -this.wallDirection * 9, y: -8 });
     this.lastWallJumpTime = Date.now();
     this.airJumpsUsed = 0;
   }

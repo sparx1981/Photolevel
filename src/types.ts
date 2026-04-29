@@ -60,11 +60,17 @@ export function getDifficultyConfig(level: number): DifficultyConfig {
   const l = Math.max(1, level);
   return {
     level: l,
-    fragilePlatformCount: l <= 1 ? 0 : l <= 2 ? 1 : l <= 3 ? 2 : Math.min(l - 1, 5),
-    fragileRespawnMs:     Math.max(2500, 5000 - (l - 2) * 400),
-    fragileCrackMs:       Math.max(400,  900  - (l - 2) * 80),
-    platformWidthMultiplier: l <= 2 ? 1.0 : Math.max(0.60, 1.0 - (l - 2) * 0.08),
-    enemyCount:           l <= 2 ? 0 : Math.min(l - 2, 4),
-    enemySpeedMultiplier: 1.0 + (l - 1) * 0.15,
+    // +1 fragile per level from l2, max 8
+    fragilePlatformCount: l <= 1 ? 0 : Math.min(l - 1, 8),
+    // Respawn time shrinks 250ms/level, floor at 700ms
+    fragileRespawnMs: Math.max(700, 5000 - (l - 1) * 250),
+    // Crack time shrinks 55ms/level, floor at 120ms
+    fragileCrackMs: Math.max(120, 900 - (l - 1) * 55),
+    // Width shrinks 5%/level from l3, floor at 42%
+    platformWidthMultiplier: l <= 2 ? 1.0 : Math.max(0.42, 1.0 - (l - 2) * 0.05),
+    // +1 enemy per level from l3, max 8
+    enemyCount: l <= 2 ? 0 : Math.min(l - 2, 8),
+    // Speed scales continuously — no cap
+    enemySpeedMultiplier: 1.0 + (l - 1) * 0.18,
   };
 }

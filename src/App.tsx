@@ -4,8 +4,10 @@ import { GameCore } from "./GameCore";
 import { LevelData, DifficultyConfig, getDifficultyConfig } from "./types";
 import { 
   generateLevelFromImage, 
+  generateRefinedLevel,
   getFallbackLevel 
 } from "./services/geminiService";
+import { detectHorizontalEdges } from "./utils/edgeDetection";
 import LandingScreen from "./components/LandingScreen";
 import HelpDialog from "./components/HelpDialog";
 import LoadingScreen from "./components/LoadingScreen";
@@ -14,7 +16,7 @@ import { Home, Trophy, Skull, HelpCircle, RotateCcw, Flame } from "lucide-react"
 type AppState = "landing" | "loading" | "playing" | "won";
 
 // Standard Game View Component
-function GameView({ levelData, imagePreview, onWin, onDeath, onBack, deathCount, difficulty }: { 
+function GameView({ levelData, imagePreview, onWin, onDeath, onBack, deathCount, difficulty, onGameCoreReady }: { 
   levelData: LevelData; 
   imagePreview: string; 
   onWin: (time: number) => void; 
@@ -22,6 +24,7 @@ function GameView({ levelData, imagePreview, onWin, onDeath, onBack, deathCount,
   onBack: () => void; 
   deathCount: number;
   difficulty: DifficultyConfig;
+  onGameCoreReady?: (core: GameCore) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const gameCoreRef = useRef<GameCore | null>(null);
@@ -37,6 +40,7 @@ function GameView({ levelData, imagePreview, onWin, onDeath, onBack, deathCount,
           onDeath,
           difficulty
         );
+        if (onGameCoreReady) onGameCoreReady(gameCoreRef.current);
       }
     }, 100);
     return () => {
@@ -90,6 +94,10 @@ export default function App() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [difficultyLevel, setDifficultyLevel] = useState(1);
+  const [refinedLevel, setRefinedLevel] = useState<LevelData | null>(null);
+  const [refineReady, setRefineReady] = useState(false);
+  const [refining, setRefining] = useState(false);
+  const activeCoreRef = useRef<GameCore | null>(null);
 
   useEffect(() => {
     (window as any).toggleHelp = () => setHelpOpen(prev => !prev);
@@ -109,21 +117,47 @@ export default function App() {
     setDeathCount(0);
     setElapsedTime(0);
     setDifficultyLevel(1);
+    setRefinedLevel(null);
+    setRefineReady(false);
+    setRefining(false);
     
     try {
       const preview = await readFileAsDataUrl(file);
       setImagePreview(preview);
       const base64 = preview.split(",")[1];
 
+      // ── Pass 1: Fast Gemini-only generation ────────────────────────────
+      let firstPassData: LevelData;
       try {
-        const data = await generateLevelFromImage(base64, file.type);
-        setLevelData(data);
+        firstPassData = await generateLevelFromImage(base64, file.type, preview);
       } catch (error) {
         console.error("[App] Level generation failed, using fallback:", error);
-        setLevelData(getFallbackLevel());
+        firstPassData = getFallbackLevel();
       }
       
+      setLevelData(firstPassData);
       setState("playing");
+
+      // ── Pass 2: Background edge detection + refined Gemini call ────────
+      setRefining(true);
+      try {
+        // Run pixel-level edge detection
+        const edges = await detectHorizontalEdges(preview);
+        const edgeSummary = edges.slice(0, 20).map(e =>
+          `{normX:${e.normX.toFixed(3)}, normY:${e.normY.toFixed(3)}, normWidth:${e.normWidth.toFixed(3)}, strength:${e.strength.toFixed(2)}}`
+        ).join("\n");
+        console.log("[App] Edge detection complete, starting refinement pass...");
+
+        const refined = await generateRefinedLevel(base64, file.type, edgeSummary, firstPassData);
+        setRefinedLevel(refined);
+        setRefineReady(true);
+        console.log("[App] Refined level ready");
+      } catch(e) {
+        console.warn("[App] Refinement pass failed:", e);
+      } finally {
+        setRefining(false);
+      }
+
     } catch (error) {
       console.error("[App] Critical failure starting level:", error);
       setState("landing");
@@ -170,17 +204,54 @@ export default function App() {
         )}
 
         {state === "playing" && imagePreview && (
-          <motion.div key="playing" className="w-full h-full">
+          <motion.div key="playing" className="w-full h-full relative">
             {levelData ? (
-              <GameView
-                levelData={levelData}
-                imagePreview={imagePreview}
-                onWin={handleWin}
-                onDeath={handleDeath}
-                onBack={() => { setState("landing"); setDifficultyLevel(1); }}
-                deathCount={deathCount}
-                difficulty={getDifficultyConfig(difficultyLevel)}
-              />
+              <>
+                <GameView
+                  levelData={levelData}
+                  imagePreview={imagePreview}
+                  onWin={handleWin}
+                  onDeath={handleDeath}
+                  onBack={() => { 
+                    setState("landing"); 
+                    setDifficultyLevel(1); 
+                    setRefinedLevel(null);
+                    setRefineReady(false);
+                  }}
+                  deathCount={deathCount}
+                  difficulty={getDifficultyConfig(difficultyLevel)}
+                  onGameCoreReady={(core) => { activeCoreRef.current = core; }}
+                />
+
+                {/* Refinement status banner */}
+                {refining && !refineReady && (
+                  <div className="fixed bottom-6 right-6 z-30 px-4 py-2 rounded-xl bg-black/60 border border-white/10 backdrop-blur-md flex items-center gap-3">
+                    <div className="w-3 h-3 rounded-full bg-blue-400 animate-pulse" />
+                    <span className="text-xs text-white/60 font-mono uppercase tracking-widest leading-none">Analysing edges…</span>
+                  </div>
+                )}
+
+                {refineReady && refinedLevel && (
+                  <div className="fixed bottom-6 right-6 z-30">
+                    <button
+                      onClick={() => {
+                        if (activeCoreRef.current && refinedLevel) {
+                          activeCoreRef.current.refreshLevel(refinedLevel);
+                          setLevelData(refinedLevel);
+                          setRefineReady(false);
+                        }
+                      }}
+                      className="px-5 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 border border-blue-400/30 backdrop-blur-md flex items-center gap-3 shadow-lg shadow-blue-900/30 transition-all active:scale-95 group"
+                    >
+                      <div className="relative">
+                        <div className="w-2 h-2 rounded-full bg-white animate-ping" />
+                        <div className="absolute inset-0 w-2 h-2 rounded-full bg-white" />
+                      </div>
+                      <span className="text-sm text-white font-bold uppercase tracking-widest">Update Map</span>
+                    </button>
+                  </div>
+                )}
+              </>
             ) : null}
           </motion.div>
         )}
