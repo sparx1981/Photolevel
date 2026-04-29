@@ -14,6 +14,16 @@ export default function HelpDialog({ isOpen, onClose }: HelpDialogProps) {
     {
       date: "2026-04-29",
       changes: [
+        "Added procedural audio system with scene-aware ambient environments.",
+        "Implemented synthesized SFX for footsteps and landing impacts.",
+        "Refined platform generation: desaturated colors for material realism and stricter width limits.",
+        "Optimized mobile experience with fullscreen support and enhanced viewport meta tags.",
+        "Added audio mute toggles to HUD and Landing Screen."
+      ]
+    },
+    {
+      date: "2026-04-29",
+      changes: [
         "Added virtual analogue joystick for smoother mobile traversal.",
         "Implemented analogue velocity-targeting for immediate movement feedback.",
         "Removed double-jump flash effect to maintain visual immersion.",

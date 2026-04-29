@@ -1,44 +1,40 @@
 # PhotoLevel Product Specification
 
-> **Last Updated:** 2026-04-29 | **Changed:** Implemented virtual analogue joystick with velocity-targeting for precise mobile control. Removed air jump flash effect.
+> **Last Updated:** 2026-04-29 | **Changed:** Integrated procedural audio system, pixel-sampled platform coloring, and scaled exit door. Added audio HUD and toggles.
 
 ## Architecture Overview
 PhotoLevel is a browser-based 2D platformer where levels are dynamically designed by Gemini AI by identifying real-world surfaces in user-uploaded images and transforming them into playable platforms. Levels feature progressive difficulty scaling on replay.
 
 - **Frontend:** React + Tailwind CSS
 - **Game Engine:** PixiJS v8
-- **Physics:** Matter.js v0.20 (Rotated slab physics with high-fidelity collision)
-- **AI Integration:** Hybrid pipeline using client-side Edge Detection + Google Gemini SDK (gemini-2.0-flash-exp). Coordinates are pixel-measured before being sent to AI for logical classification.
+- **Physics:** Matter.js v0.20 (Rotated slab physics)
+- **Audio:** Custom Web Audio API procedural synthesis (Ambient + SFX)
+- **AI Integration:** Hybrid pipeline using client-side Edge Detection + Google Gemini SDK.
 
 ## File Structure
 - `src/App.tsx`: Main application container, state management, and difficulty progression.
-- `src/GameCore.ts`: Primary game engine handling rotated platforms, fragile states, enemies, camera clamping, and responsive scaling.
-- `src/utils/imageCrop.ts`: Image dimension validation.
-- `src/utils/edgeDetection.ts`: Client-side Sobel/Hough horizontal edge extractor.
-- `src/services/geminiService.ts`: Hybrid pipeline orchestrator that passes pixel-accurate edges to Gemini for classification.
-- `src/types.ts`: Shared TypeScript interfaces including difficulty configurations.
+- `src/GameCore.ts`: Primary game engine handling rotated platforms, fragile states, enemies, and camera.
+- `src/utils/audioManager.ts`: Procedural sound synthesis engine for ambient and SFX.
+- `src/services/geminiService.ts`: Hybrid pipeline orchestrator.
+- `src/types.ts`: Shared TypeScript interfaces.
 
-## Game Logic: Surface Alignment
-1. **Edge Detection (Pixel-Level):** A Sobel horizontal gradient filter runs on a hidden canvas to extract high-contrast horizontal line segments. This provides the *exact* physical location of potential platforms.
-2. **AI Classification:** The detected line data (normX, normY, normWidth) is sent to Gemini alongside the image. Gemini's role is narrowed to *classification*: deciding if a line is a real walkable surface, assigning themes/labels, and adding bridges.
-3. **Accuracy Enforcement:** Gemini is forbidden from modifying detected coordinates (±0.02 tolerance max), virtually eliminating coordinate "drift" and floating platforms.
-4. **Traversability:** AI ensures a reachable path from spawn to exit by adding bridges where gaps exceed threshold values.
+## Key Systems
 
-## Progressive Difficulty
-Replaying a photo increments the difficulty level, applying the following modifiers:
-- **Fragile Platforms:** Certain platforms dissolve shortly after contact and respawn after a delay. Visually indistinguishable from normal platforms until they begin to break.
-- **Patrolling Enemies:** Red "Astro-Guard" enemies patrol specific platforms. Contact results in immediate respawn.
-- **Platform Scaling:** Platforms are 25% shorter (height 10) for a cleaner look. Non-ground platforms also become narrower at higher levels to test precision.
-- **Speed Multipliers:** Enemies move faster as level increases.
+### 1. Gemini Level Designer
+- **Hybrid Pipeline:** Combines client-side edge detection with Gemini vision analysis.
+- **Classification:** identify surfaces as `wood`, `stone`, `metal`, `concrete`, `tree_branch`, `dirt`, or `glass`.
+- **Theming:** Gemini generates `primaryColour`, `accentColour`, `skyTint`, and `sceneType` (audio classification).
+- **Platform Constraints:** Code-enforced limits on width (0.14 normalized) to prevent overshooting.
 
-## Rendering Engine
-- **Background:** The raw user-uploaded image is used as the level background.
-  - **Alignment:** Background is loaded and scaled BEFORE content positioning to ensure 1:1 pixel parity.
-- **Ambient Tinting:** Player and enemies are tinted with (30% white + 70% primary theme colour) to blend naturally into the scene's lighting.
-- **Portal Device:** The exit is a vertical charging station with a dark navy casing, dual green-glass windows, and blinking indicator lights at the base.
-- **Platforms:** Rendered as clean pill-shaped slabs with depth effects:
-  - **Visual Layers:** 3px top highlight, 10px semi-transparent body fill, and 4px underside depth strip.
-- **Debug Labels:** Optional text overlay (y-coordinate and label) toggled via settings.
+### 2. Physics & Gameplay
+- **Player Controller:** Precision movement with analogue velocity-targeting (touch) and force-based movement (keyboard).
+- **Difficulty Scaling:** Incremental complexity: Fragile platforms, Patrolling enemies, Narrower surfaces.
+- **Environmental Feedback:** Ambient tinting on sprites to match scene lighting.
+- **Dynamic Coloring:** Platforms sample actual image pixels at their position for seamless integration.
+
+### 3. Audio System
+- **Procedural Synthesis:** Real-time generation of wind, birds, waves, and industrial hums based on `sceneType`.
+- **Dynamic SFX:** Footsteps and landing impacts with intensity scaling based on fall height.
 
 ## Controls & Shortcuts
 | Action | Key / Control |
@@ -47,7 +43,10 @@ Replaying a photo increments the difficulty level, applying the following modifi
 | Jump | Space / W / Up / Jump Button (Touch) |
 | Home | Return to Menu |
 | Help | Help & Resources |
-| Settings | Debug & Touch Control Toggles (Landing Screen) |
+| Settings | Debug, Touch Control, and Audio Toggles (Landing Screen) |
+| Audio HUD | Mute BG/SFX buttons during gameplay |
 
-## Implementation Details: Air Jump Feedback
-- **Indicator:** A persistent blue pip above the player's head signals if an air jump is currently available.
+## Implementation Details: Feedback
+- **Jump Indicator:** A persistent blue pip above the player's head signals if an air jump is available.
+- **Visuals:** Platforms are 62-72% transparent for better background visibility. Exit door scaled to 70% for improved level proportions.
+- **Material Sampling:** Platform materials desaturated 45% after pixel sampling for realistic integration.

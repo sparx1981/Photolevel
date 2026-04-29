@@ -28,12 +28,15 @@ export interface Wall {
   angle?: number;
 }
 
+import type { SceneType } from "./utils/audioManager";
+
 export interface LevelTheme {
   name: string;
   primaryColour: string;
   accentColour: string;
   skyTint: string;
   description: string;
+  sceneType?: SceneType;  // NEW — for audio
 }
 
 export interface LevelData {

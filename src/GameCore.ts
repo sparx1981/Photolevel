@@ -1,6 +1,7 @@
 import * as PIXI from "pixi.js";
 import Matter from "matter-js";
 import { LevelData, DifficultyConfig, PlatformState } from "./types";
+import { AudioManager, SceneType } from "./utils/audioManager";
 
 export class GameCore {
   private app: PIXI.Application;
@@ -36,6 +37,11 @@ export class GameCore {
   private ambientTint = 0xffffff;
   private showDebugLabels: boolean;
   private analogueX = 0;
+  private audio: AudioManager = new AudioManager();
+  private prevPosX = 0;
+  private airborneStartY = 0;
+
+  private sampledPlatformColours: Map<string, { r: number; g: number; b: number }> = new Map();
 
   private exitLightsGraphics: PIXI.Graphics | null = null;
   private exitLightPositions: Array<{ x: number; y: number; blinking: boolean }> = [];
@@ -85,7 +91,9 @@ export class GameCore {
     onWin: (time: number) => void,
     onDeath: () => void,
     difficulty: DifficultyConfig,
-    showDebugLabels: boolean = false
+    showDebugLabels: boolean = false,
+    muteBg:  boolean = false,
+    muteSfx: boolean = false
   ) {
     this.levelData = levelData;
     this.imageBase64 = imageBase64;
@@ -93,6 +101,9 @@ export class GameCore {
     this.onDeath = onDeath;
     this.difficulty = difficulty;
     this.showDebugLabels = showDebugLabels;
+
+    this.audio.muteBg = muteBg;
+    this.audio.muteSfx = muteSfx;
 
     this.app = new PIXI.Application();
     this.engine = Matter.Engine.create({ gravity: { y: 1.25 } });
@@ -147,7 +158,6 @@ export class GameCore {
       }
 
       // ── 4. Build all game content ──────────────────────────────────────────
-      this.buildPhysics();
       this.createPlayer();
 
       // ── Apply scene ambient lighting tint to player ──────────────────────────
@@ -166,8 +176,15 @@ export class GameCore {
         console.log(`[GameCore] Ambient tint applied: #${this.ambientTint.toString(16).padStart(6,'0')}`);
       }
 
+      await this.samplePlatformColoursFromImage();
+      this.buildPhysics();
+
       this.createExit();
       this.spawnEnemies();
+
+      const sceneType = (this.levelData.theme?.sceneType ?? "default") as SceneType;
+      this.audio.startAmbient(sceneType);
+      console.log(`[GameCore] Ambient audio started: ${sceneType}`);
 
       // ── 5. NOW compute scale and set initial camera — content is all present
       //       This must happen AFTER all addChild calls above.              ───
@@ -277,12 +294,12 @@ export class GameCore {
       });
       bodies.push(body);
 
-      const colours = this.getDynamicPlatformColours(p.theme ?? "generic");
+      const colours = this.getPlatformColours(p.id, p.theme ?? "generic");
 
       if (p.theme !== "dirt_ground") {
         const shadowGfx = new PIXI.Graphics();
         shadowGfx.roundRect(-effectiveWidth / 2 + 5, 6, effectiveWidth - 4, 10, 4);
-        shadowGfx.fill({ color: 0x000000, alpha: 0.22 });
+        shadowGfx.fill({ color: 0x000000, alpha: 0.12 });
         shadowGfx.x = p.x;
         shadowGfx.y = p.y;
         shadowGfx.rotation = angleRad;
@@ -330,7 +347,7 @@ export class GameCore {
       bodies.push(body);
       
       const gfx = new PIXI.Graphics();
-      const colours = this.getDynamicPlatformColours(w.theme ?? "generic");
+      const colours = this.getPlatformColours(w.id || "wall", w.theme ?? "generic");
       gfx.rect(w.x - w.width / 2, w.y - w.height / 2, w.width, w.height);
       gfx.fill({ color: colours.side, alpha: 0.8 });
       this.worldContainer.addChild(gfx);
@@ -339,36 +356,87 @@ export class GameCore {
     Matter.Composite.add(this.engine.world, bodies);
   }
 
-  private getDynamicPlatformColours(theme: string): { top: number; side: number; highlight: number } {
-    const hex = (this.levelData.theme?.primaryColour ?? "#7a6a5a").replace('#', '');
-    const c = parseInt(hex, 16) || 0x7a6a5a;
-    let r = (c >> 16) & 0xff;
-    let g = (c >> 8)  & 0xff;
-    let b =  c        & 0xff;
+  private async samplePlatformColoursFromImage(): Promise<void> {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        // Downsample to 128×72 for fast sampling — enough colour fidelity
+        const W = 128, H = 72;
+        const canvas = document.createElement("canvas");
+        canvas.width = W; canvas.height = H;
+        const ctx = canvas.getContext("2d")!;
+        ctx.drawImage(img, 0, 0, W, H);
 
-    // Per-type hue nudge — small shifts so types are distinguishable but all stay scene-toned
-    const shifts: Record<string, [number, number, number]> = {
-      stone_ledge:    [  5,   5,   5],
-      wooden_plank:   [ 22,   8, -18],  // warmer/more red
-      metal_platform: [ -8,   4,  18],  // cooler/more blue
-      rooftop:        [  0,   0,   0],
-      tree_branch:    [-12,  14,  -8],  // greener
-      rock_outcrop:   [ 12,   6,   0],
-      ice_shelf:      [-12,   6,  24],  // blue-white
-      dirt_ground:    [ 18,  10, -12],
-      generic:        [  0,   0,   0],
+        for (const p of this.levelData.platforms) {
+          if (p.normX == null || p.normY == null) continue;
+          // Sample a 5×3 patch centred on the platform position and average
+          let tr = 0, tg = 0, tb = 0, count = 0;
+          for (let dx = -2; dx <= 2; dx++) {
+            for (let dy = -1; dy <= 1; dy++) {
+              const px = Math.min(W-1, Math.max(0, Math.round(p.normX * W) + dx));
+              const py = Math.min(H-1, Math.max(0, Math.round(p.normY * H) + dy));
+              const d = ctx.getImageData(px, py, 1, 1).data;
+              tr += d[0]; tg += d[1]; tb += d[2]; count++;
+            }
+          }
+          this.sampledPlatformColours.set(p.id, {
+            r: Math.round(tr / count),
+            g: Math.round(tg / count),
+            b: Math.round(tb / count),
+          });
+        }
+        console.log(`[GameCore] Sampled colours for ${this.sampledPlatformColours.size} platforms`);
+        resolve();
+      };
+      img.onerror = () => resolve();
+      img.src = this.imageBase64;
+    });
+  }
+
+  private getPlatformColours(platformId: string, theme: string): { top: number; side: number; highlight: number } {
+    const sampled = this.sampledPlatformColours.get(platformId);
+
+    let r: number, g: number, b: number;
+    if (sampled) {
+      // Use the image pixel colour directly
+      r = sampled.r; g = sampled.g; b = sampled.b;
+    } else {
+      // Fallback to primaryColour
+      const hex = (this.levelData.theme?.primaryColour ?? "#7a6a5a").replace('#','');
+      const c = parseInt(hex, 16) || 0x7a6a5a;
+      r = (c >> 16) & 0xff; g = (c >> 8) & 0xff; b = c & 0xff;
+    }
+
+    // Desaturate 45% to keep platforms legible without overpowering the image
+    const grey = 0.299*r + 0.587*g + 0.114*b;
+    const DS = 0.45;
+    r = Math.round(r*(1-DS) + grey*DS);
+    g = Math.round(g*(1-DS) + grey*DS);
+    b = Math.round(b*(1-DS) + grey*DS);
+
+    // Small per-type hue nudge so different material types feel distinct
+    const shifts: Record<string, [number,number,number]> = {
+      stone_ledge:    [  4,  4,  4],
+      wooden_plank:   [ 16,  5,-14],
+      metal_platform: [ -6,  3, 14],
+      rooftop:        [  0,  0,  0],
+      tree_branch:    [ -8, 10, -6],
+      rock_outcrop:   [  8,  4,  0],
+      ice_shelf:      [ -8,  4, 18],
+      dirt_ground:    [ 12,  7, -8],
+      generic:        [  0,  0,  0],
     };
-    const [dr, dg, db] = shifts[theme] ?? [0, 0, 0];
-    r = Math.max(0, Math.min(255, r + dr));
-    g = Math.max(0, Math.min(255, g + dg));
-    b = Math.max(0, Math.min(255, b + db));
+    const [dr,dg,db] = shifts[theme] ?? [0,0,0];
+    r = Math.max(0, Math.min(255, r+dr));
+    g = Math.max(0, Math.min(255, g+dg));
+    b = Math.max(0, Math.min(255, b+db));
 
-    const lim = (v: number) => Math.max(0, Math.min(255, Math.round(v)));
-    const col = (r: number, g: number, b: number) => (lim(r) << 16) | (lim(g) << 8) | lim(b);
+    const lim = (v:number) => Math.max(0, Math.min(255, Math.round(v)));
+    const col  = (r:number,g:number,b:number) => (lim(r)<<16)|(lim(g)<<8)|lim(b);
     return {
-      highlight: col(r + 68, g + 62, b + 52),
-      top:       col(r + 26, g + 22, b + 16),
-      side:      col(r - 42, g - 36, b - 28),
+      highlight: col(r+55, g+50, b+42),
+      top:       col(r+18, g+15, b+10),
+      side:      col(r-36, g-30, b-22),
     };
   }
 
@@ -383,15 +451,15 @@ export class GameCore {
 
     // Main pill body — 25% shorter: height 10 (was 14)
     gfx.roundRect(-width / 2, -2, width, 10, 5);
-    gfx.fill({ color: colours.top, alpha: 0.88 });
+    gfx.fill({ color: colours.top, alpha: 0.62 });
 
     // Top highlight strip
     gfx.roundRect(-width / 2, -2, width, 3, 5);
-    gfx.fill({ color: colours.highlight, alpha: 0.92 });
+    gfx.fill({ color: colours.highlight, alpha: 0.72 });
 
     // Underside depth strip
     gfx.roundRect(-width / 2 + 2, 6, width - 4, 4, 3);
-    gfx.fill({ color: colours.side, alpha: 0.88 });
+    gfx.fill({ color: colours.side, alpha: 0.68 });
   }
 
   private createPlayer() {
@@ -601,57 +669,57 @@ export class GameCore {
     const g = this.exitGraphics;
 
     // Dimensions — device sits with base at y=0 and extends upward
-    const W = 66, H = 102, CR = 16;
+    const W = 46, H = 72, CR = 11; // 70% of original
 
     // ── Drop shadow ────────────────────────────────────────────────────
-    g.roundRect(-29, -96, 62, 96, CR);
-    g.fill({ color: 0x000000, alpha: 0.28 });
+    g.roundRect(-20, -67, 43, 67, CR);
+    g.fill({ color: 0x000000, alpha: 0.25 });
 
     // ── Outer casing body ──────────────────────────────────────────────
-    g.roundRect(-33, -H, W, H, CR);
+    g.roundRect(-23, -H, W, H, CR);
     g.fill({ color: 0x1A2540 });
     // Top-left rim highlight
-    g.roundRect(-33, -H, 10, H, CR);
+    g.roundRect(-23, -H, 7, H, CR);
     g.fill({ color: 0x2A3A5A, alpha: 0.55 });
-    g.roundRect(-33, -H, W, 10, CR);
+    g.roundRect(-23, -H, W, 7, CR);
     g.fill({ color: 0x2A3A5A, alpha: 0.45 });
     // Bottom-right shadow edge
-    g.roundRect(21, -H, 12, H, CR);
+    g.roundRect(15, -H, 8, H, CR);
     g.fill({ color: 0x0C1428, alpha: 0.5 });
 
     // ── Inner recessed panel ───────────────────────────────────────────
-    g.roundRect(-27, -96, 54, 90, 10);
+    g.roundRect(-19, -67, 38, 63, 7);
     g.fill({ color: 0x0C1422 });
 
     // ── Window helper: draws a glass slot at given top-y, given height ─
     const drawWindow = (topY: number, wH: number) => {
-      const wW = 46, wX = -23;
+      const wW = 32, wX = -16;
       // Outer ring
-      g.roundRect(wX - 2, topY - 2, wW + 4, wH + 4, 9);
+      g.roundRect(wX - 2, topY - 2, wW + 4, wH + 4, 6);
       g.fill({ color: 0x07101C });
       // Glass base (dark green)
-      g.roundRect(wX, topY, wW, wH, 8);
+      g.roundRect(wX, topY, wW, wH, 6);
       g.fill({ color: 0x0B2E1A });
       // Mid fill
-      g.roundRect(wX + 2, topY + 2, wW - 4, wH - 4, 6);
+      g.roundRect(wX + 1.5, topY + 1.5, wW - 3, wH - 3, 4);
       g.fill({ color: 0x1A6040 });
       // Upper highlight (glass thickness illusion)
-      g.roundRect(wX + 3, topY + 3, wW - 8, Math.round(wH * 0.42), 5);
+      g.roundRect(wX + 2, topY + 2, wW - 5, Math.round(wH * 0.42), 3);
       g.fill({ color: 0x2D8F56, alpha: 0.65 });
       // Gloss shine top-left
-      g.roundRect(wX + 4, topY + 4, Math.round(wW * 0.40), 7, 3);
+      g.roundRect(wX + 3, topY + 3, Math.round(wW * 0.40), 5, 2);
       g.fill({ color: 0xFFFFFF, alpha: 0.13 });
     };
 
-    drawWindow(-90, 32);  // top window
-    drawWindow(-52, 28);  // bottom window (slightly shorter for depth illusion)
+    drawWindow(-63, 22);  // top window    (was -90, 32)
+    drawWindow(-37, 20);  // bottom window (was -52, 28)
 
     // ── Centre divider strip ───────────────────────────────────────────
-    g.roundRect(-27, -58, 54, 6, 2);
+    g.roundRect(-19, -41, 38, 4, 2);
     g.fill({ color: 0x0C1422 });
 
     // ── Base indicator panel ───────────────────────────────────────────
-    g.roundRect(-27, -20, 54, 16, 5);
+    g.roundRect(-19, -14, 38, 11, 4);
     g.fill({ color: 0x07101C });
 
     g.position.set(exit.x, exit.y);
@@ -659,10 +727,10 @@ export class GameCore {
 
     // ── Lights (separate Graphics so they can blink independently) ─────
     this.exitLightPositions = [
-      { x: -15, y: -12, blinking: true  },   // far left  — blinks
-      { x:  -6, y: -12, blinking: false },   // inner left — static dim
-      { x:   6, y: -12, blinking: false },   // inner right — static dim
-      { x:  15, y: -12, blinking: true  },   // far right — blinks
+      { x: -10, y: -8, blinking: true  },
+      { x:  -4, y: -8, blinking: false },
+      { x:   4, y: -8, blinking: false },
+      { x:  10, y: -8, blinking: true  },
     ];
     this.exitLightsGraphics = new PIXI.Graphics();
     this.exitLightsGraphics.position.set(exit.x, exit.y);
@@ -755,7 +823,7 @@ export class GameCore {
           if (fp.timer <= 0) {
             fp.gfx.alpha = 1;
             fp.state = "solid";
-            const colours = this.getDynamicPlatformColours(fp.themeKey);
+            const colours = this.getPlatformColours(key, fp.themeKey);
             this.drawPlatformGfx(fp.gfx, fp.width, fp.height, colours, false);
           }
           break;
@@ -774,6 +842,13 @@ export class GameCore {
 
     Matter.Engine.update(this.engine, dtMs);
     this.playerSprite.position.set(this.player.position.x, this.player.position.y);
+
+    // ── Step sounds ──────────────────────────────────────────────────────────
+    if (this.isGrounded && this.player) {
+      const dx = Math.abs(this.player.position.x - this.prevPosX);
+      if (dx > 1.8) this.audio.playStep(dx > 3.0);
+    }
+    this.prevPosX = this.player?.position.x ?? this.prevPosX;
 
     // ── Dynamic cast shadow ───────────────────────────────────────────────────
     if (this.shadowSprite && this.player) {
@@ -864,9 +939,20 @@ export class GameCore {
 
     const prevGrounded = this.isGrounded;
     this.isGrounded = centreHit.length > 0 || leftHit.length > 0 || rightHit.length > 0;
+    
+    // Landing sounds
+    if (this.isGrounded && !prevGrounded) {
+      this.audio.playLand(Math.max(0, this.player.position.y - this.airborneStartY));
+    }
+
     if (this.isGrounded !== prevGrounded && this.isGrounded) {
       this.airJumpsUsed = 0;
       this.jumpBufferTimer = 0;
+    }
+
+    // Track airborne start position for landing impact calculation
+    if (!this.isGrounded && prevGrounded) {
+      this.airborneStartY = this.player.position.y;
     }
 
     const leftRay = Matter.Query.ray(allStaticBodies, { x: this.player.position.x - 14, y: this.player.position.y }, { x: this.player.position.x - 20, y: this.player.position.y });
@@ -1043,6 +1129,7 @@ export class GameCore {
   public destroy() {
     this.app.destroy(true, { children: true });
     Matter.Engine.clear(this.engine);
+    this.audio.destroy();
     this.enemies.forEach(e => Matter.Composite.remove(this.engine.world, e.body));
     this.enemies = [];
     this.fragilePlatforms.clear();
@@ -1058,4 +1145,7 @@ export class GameCore {
   public setAnalogueX(value: number): void {
     this.analogueX = Math.max(-1, Math.min(1, value));
   }
+
+  public setMuteBg(m: boolean)  { this.audio.setMuteBg(m); }
+  public setMuteSfx(m: boolean) { this.audio.setMuteSfx(m); }
 }

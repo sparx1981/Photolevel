@@ -14,6 +14,10 @@ interface LandingScreenProps {
   onToggleDebug: () => void;
   showMobileControls: boolean;
   onToggleMobile: () => void;
+  muteBg: boolean;
+  onToggleMuteBg: () => void;
+  muteSfx: boolean;
+  onToggleMuteSfx: () => void;
 }
 
 export default function LandingScreen({ 
@@ -21,7 +25,11 @@ export default function LandingScreen({
   showDebugLabels, 
   onToggleDebug, 
   showMobileControls, 
-  onToggleMobile 
+  onToggleMobile,
+  muteBg,
+  onToggleMuteBg,
+  muteSfx,
+  onToggleMuteSfx
 }: LandingScreenProps) {
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -118,6 +126,22 @@ export default function LandingScreen({
 
       {/* Settings toggles — subtle bottom-right */}
       <div className="fixed bottom-4 right-5 z-50 flex flex-col items-end gap-2">
+        <button onClick={onToggleMuteBg}
+          className="flex items-center gap-1.5 text-white/25 hover:text-white/55 transition-colors"
+        >
+          <div className={`w-2 h-2 rounded-full border transition-colors ${
+            muteBg ? "bg-transparent border-white/30" : "bg-green-400 border-green-300"
+          }`} />
+          <span className="text-[10px] font-mono uppercase tracking-widest">bg sounds</span>
+        </button>
+        <button onClick={onToggleMuteSfx}
+          className="flex items-center gap-1.5 text-white/25 hover:text-white/55 transition-colors"
+        >
+          <div className={`w-2 h-2 rounded-full border transition-colors ${
+            muteSfx ? "bg-transparent border-white/30" : "bg-green-400 border-green-300"
+          }`} />
+          <span className="text-[10px] font-mono uppercase tracking-widest">sfx sounds</span>
+        </button>
         <button
           onClick={onToggleMobile}
           className="flex items-center gap-1.5 text-white/25 hover:text-white/55 transition-colors"

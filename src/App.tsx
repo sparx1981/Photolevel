@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { GameCore } from "./GameCore";
 import { LevelData, DifficultyConfig, getDifficultyConfig } from "./types";
+import { SCENE_LABELS } from "./utils/audioManager";
 import { 
   generateLevelFromImage, 
   getFallbackLevel 
@@ -88,7 +89,7 @@ function VirtualJoystick({ onMove }: { onMove: (x: number) => void }) {
 }
 
 // Standard Game View Component
-function GameView({ levelData, imagePreview, onWin, onDeath, onBack, deathCount, difficulty, showDebugLabels, showMobileControls }: { 
+function GameView({ levelData, imagePreview, onWin, onDeath, onBack, deathCount, difficulty, showDebugLabels, showMobileControls, muteBg, muteSfx, onToggleMuteBg, onToggleMuteSfx }: { 
   levelData: LevelData; 
   imagePreview: string; 
   onWin: (time: number) => void; 
@@ -98,9 +99,22 @@ function GameView({ levelData, imagePreview, onWin, onDeath, onBack, deathCount,
   difficulty: DifficultyConfig;
   showDebugLabels: boolean;
   showMobileControls: boolean;
+  muteBg: boolean;
+  muteSfx: boolean;
+  onToggleMuteBg: () => void;
+  onToggleMuteSfx: () => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const gameCoreRef = useRef<GameCore | null>(null);
+
+  // Sync mute state changes to game core
+  useEffect(() => {
+    gameCoreRef.current?.setMuteBg(muteBg);
+  }, [muteBg]);
+
+  useEffect(() => {
+    gameCoreRef.current?.setMuteSfx(muteSfx);
+  }, [muteSfx]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -112,7 +126,9 @@ function GameView({ levelData, imagePreview, onWin, onDeath, onBack, deathCount,
           onWin,
           onDeath,
           difficulty,
-          showDebugLabels
+          showDebugLabels,
+          muteBg,
+          muteSfx
         );
       }
     }, 100);
@@ -181,6 +197,7 @@ function GameView({ levelData, imagePreview, onWin, onDeath, onBack, deathCount,
           <span className="text-sm font-mono">Lv.{difficulty.level}</span>
         </div>
       </div>
+
     </motion.div>
   );
 }
@@ -200,6 +217,9 @@ export default function App() {
   const [showMobileControls, setShowMobileControls] = useState<boolean>(() =>
     localStorage.getItem('cq_mobile') === 'true'
   );
+  const [muteBg, setMuteBg]   = useState<boolean>(() => localStorage.getItem('cq_mute_bg')  === 'true');
+  const [muteSfx, setMuteSfx] = useState<boolean>(() => localStorage.getItem('cq_mute_sfx') === 'true');
+  const [activeScene, setActiveScene] = useState<string>("—");
 
   const toggleDebug = () => setShowDebugLabels(prev => {
     localStorage.setItem('cq_debug', String(!prev)); return !prev;
@@ -207,6 +227,37 @@ export default function App() {
   const toggleMobile = () => setShowMobileControls(prev => {
     localStorage.setItem('cq_mobile', String(!prev)); return !prev;
   });
+
+  const toggleMuteBg = () => setMuteBg(prev => {
+    const next = !prev;
+    localStorage.setItem('cq_mute_bg', String(next));
+    return next;
+  });
+  const toggleMuteSfx = () => setMuteSfx(prev => {
+    const next = !prev;
+    localStorage.setItem('cq_mute_sfx', String(next));
+    return next;
+  });
+
+  useEffect(() => {
+    const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+    if (!isMobile) return;
+
+    const requestFs = () => {
+      const el = document.documentElement;
+      if (!document.fullscreenElement) {
+        el.requestFullscreen?.({ navigationUI: "hide" }).catch(() => {});
+      }
+      window.removeEventListener("touchstart", requestFs);
+      window.removeEventListener("click", requestFs);
+    };
+    window.addEventListener("touchstart", requestFs, { once: true });
+    window.addEventListener("click", requestFs, { once: true });
+    return () => {
+      window.removeEventListener("touchstart", requestFs);
+      window.removeEventListener("click", requestFs);
+    };
+  }, []);
 
   useEffect(() => {
     if (state !== "won") return;
@@ -252,9 +303,13 @@ export default function App() {
       try {
         const data = await generateLevelFromImage(base64, file.type, preview);
         setLevelData(data);
+        const sceneKey = data?.theme?.sceneType ?? "default";
+        setActiveScene(SCENE_LABELS[sceneKey as keyof typeof SCENE_LABELS] ?? sceneKey);
       } catch (error) {
         console.error("[App] Level generation failed, using fallback:", error);
-        setLevelData(getFallbackLevel());
+        const fallback = getFallbackLevel();
+        setLevelData(fallback);
+        setActiveScene(SCENE_LABELS[fallback.theme.sceneType as keyof typeof SCENE_LABELS] ?? fallback.theme.sceneType);
       }
       
       setState("playing");
@@ -294,6 +349,10 @@ export default function App() {
               onToggleDebug={toggleDebug}
               showMobileControls={showMobileControls}
               onToggleMobile={toggleMobile}
+              muteBg={muteBg}
+              onToggleMuteBg={toggleMuteBg}
+              muteSfx={muteSfx}
+              onToggleMuteSfx={toggleMuteSfx}
             />
           </motion.div>
         )}
@@ -312,6 +371,23 @@ export default function App() {
 
         {state === "playing" && imagePreview && (
           <motion.div key="playing" className="w-full h-full relative">
+            {/* Audio HUD — top right */}
+            <div className="fixed top-3 right-3 z-40 flex flex-col items-end gap-1.5">
+              <div className="flex gap-1.5">
+                <button onClick={toggleMuteBg}
+                  className="px-2 py-1 rounded-lg bg-black/40 border border-white/10 text-[10px] font-mono uppercase tracking-widest text-white/50 hover:text-white/80 transition-colors"
+                >{muteBg ? "🔇" : "🔊"} BG</button>
+                <button onClick={toggleMuteSfx}
+                  className="px-2 py-1 rounded-lg bg-black/40 border border-white/10 text-[10px] font-mono uppercase tracking-widest text-white/50 hover:text-white/80 transition-colors"
+                >{muteSfx ? "🔇" : "🔊"} SFX</button>
+              </div>
+              {!muteBg && (
+                <p className="text-[8px] font-mono text-white/30 tracking-wide pr-0.5">
+                  ♪ {activeScene}
+                </p>
+              )}
+            </div>
+
             {levelData ? (
               <GameView
                 levelData={levelData}
@@ -327,6 +403,10 @@ export default function App() {
                 difficulty={getDifficultyConfig(difficultyLevel)}
                 showDebugLabels={showDebugLabels}
                 showMobileControls={showMobileControls}
+                muteBg={muteBg}
+                muteSfx={muteSfx}
+                onToggleMuteBg={toggleMuteBg}
+                onToggleMuteSfx={toggleMuteSfx}
               />
             ) : null}
           </motion.div>

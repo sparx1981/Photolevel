@@ -4,8 +4,9 @@ import { detectHorizontalEdges, DetectedLine } from "../utils/edgeDetection";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
-const LEVEL_W = 1280;
-const LEVEL_H = 720;
+const LEVEL_W = 1400; // Total world width
+const LEVEL_H = 800;  // Total world height
+const MAX_PLATFORM_PX = Math.round(0.14 * LEVEL_W); // 196px hard cap
 const PLATFORM_HEIGHT_PX = 10;
 
 export function getFallbackLevel(): LevelData {
@@ -14,7 +15,8 @@ export function getFallbackLevel(): LevelData {
     width: LEVEL_W, height: LEVEL_H,
     theme: {
       name: "Default", primaryColour: "#64748b", accentColour: "#3b82f6",
-      skyTint: "#00000000", description: "A classic platformer level."
+      skyTint: "#00000000", description: "A classic platformer level.",
+      sceneType: "default"
     },
     platforms: [
       { id:"f1", x:640,  y:706, width:1280, height:10, theme:"dirt_ground", angle:0, label:"Floor" },
@@ -161,6 +163,15 @@ of each other, add bridge platforms at intermediate heights to create a stepping
 DO NOT add more than 2 bridge platforms total. If the level needs more than 2 bridges
 to be completable, re-examine your surface selection and pick better-spaced platforms.
 
+- sceneType: classify the audio environment:
+    "nature_outdoor" — parks, gardens, forests, countryside
+    "urban_outdoor"  — city streets, plazas, rooftops
+    "interior_calm"  — homes, quiet offices, bedrooms
+    "interior_busy"  — cafes, restaurants, shops, lobbies
+    "coastal"        — beaches, harbours, lakeside
+    "industrial"     — factories, warehouses, server rooms
+    "default"        — everything else
+
 Return ONLY valid JSON. No explanation.`;
 
   const platformThemeEnum = [
@@ -191,13 +202,17 @@ Return ONLY valid JSON. No explanation.`;
     properties: {
       theme: {
         type: Type.OBJECT,
-        required: ["name", "primaryColour", "accentColour", "skyTint", "description"],
+        required: ["name", "primaryColour", "accentColour", "skyTint", "description", "sceneType"],
         properties: {
           name: { type: Type.STRING },
           primaryColour: { type: Type.STRING },
           accentColour: { type: Type.STRING },
           skyTint: { type: Type.STRING },
-          description: { type: Type.STRING }
+          description: { type: Type.STRING },
+          sceneType: { type: Type.STRING, enum: [
+            "nature_outdoor","urban_outdoor","interior_calm",
+            "interior_busy","industrial","coastal","default"
+          ]}
         }
       },
       platforms: { type: Type.ARRAY, items: normPlatformSchema },
@@ -259,7 +274,7 @@ Return ONLY valid JSON. No explanation.`;
   }
 
   // ── Stage 3: Convert to pixel coords + enforce hard limits in code ───────
-  const MAX_PLATFORM_PX = Math.round(0.18 * LEVEL_W); // 230px max — enforced in code
+  const MAX_PLATFORM_PX = Math.round(0.14 * LEVEL_W); // 196px hard cap
 
   const platforms = (raw.platforms ?? []).map((p: any, i: number) => {
     const isGround = p.theme === "dirt_ground";
