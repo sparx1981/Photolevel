@@ -1,0 +1,6 @@
+{
+  "name": "PhotoLevel",
+  "description": "Upload any photo to transform it into an infinite platforming adventure. Every photo is a new level.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
