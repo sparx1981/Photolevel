@@ -53,7 +53,7 @@ export default function LandingScreen({ onUpload }: LandingScreenProps) {
       >
         <div className="space-y-4">
           <h1 className="text-6xl font-black uppercase tracking-tighter leading-none">
-            Capture<span className="text-blue-500">Quest</span>
+            Photo<span className="text-blue-500">Level</span>
           </h1>
           <p className="text-white/40 text-lg font-medium tracking-tight">
             Turn your world into an adventure.
