@@ -1,123 +1,109 @@
-import React, { useState, useCallback } from "react";
-import { Upload, Image as ImageIcon, Sparkles } from "lucide-react";
+import React, { useState, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
+import { Upload, AlertCircle } from "lucide-react";
+import { 
+  getImageDimensions, 
+  MIN_CREATE_WIDTH, 
+  MIN_CREATE_HEIGHT, 
+  ImageDimensions
+} from "../utils/imageCrop";
 
 interface LandingScreenProps {
   onUpload: (file: File) => void;
 }
 
 export default function LandingScreen({ onUpload }: LandingScreenProps) {
-  const [isDragging, setIsDragging] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-  }, []);
-
-  const handleDragLeave = useCallback(() => {
-    setIsDragging(false);
-  }, []);
-
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-    const file = e.dataTransfer.files[0];
-    if (file && file.type.startsWith("image/")) {
-      onUpload(file);
+  const handleFile = async (file: File) => {
+    if (!file.type.startsWith("image/")) {
+      setError("Please upload an image file.");
+      return;
     }
-  }, [onUpload]);
 
-  const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      const dataUrl = e.target?.result as string;
+      const dims = await getImageDimensions(dataUrl);
+      
+      if (dims.width < MIN_CREATE_WIDTH || dims.height < MIN_CREATE_HEIGHT) {
+        setError(`Photo must be at least ${MIN_CREATE_WIDTH}×${MIN_CREATE_HEIGHT}px. Your photo is ${dims.width}×${dims.height}px.`);
+        return;
+      }
+
       onUpload(file);
-    }
-  }, [onUpload]);
+      setError(null);
+    };
+    reader.readAsDataURL(file);
+  };
 
   return (
-    <div className="min-h-screen bg-[#050505] text-white flex flex-col items-center justify-center p-6 overflow-hidden">
-      <div className="absolute inset-0 opacity-10 pointer-events-none">
-        <div className="absolute top-0 left-0 w-full h-full bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-blue-500/20 via-transparent to-transparent blur-3xl" />
+    <div className="relative min-h-screen flex items-center justify-center p-6 overflow-hidden">
+      {/* Background decoration */}
+      <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none">
+        <div className="absolute -top-[10%] -left-[10%] w-[40%] h-[40%] bg-blue-500/10 blur-[120px] rounded-full" />
+        <div className="absolute -bottom-[10%] -right-[10%] w-[40%] h-[40%] bg-purple-500/10 blur-[120px] rounded-full" />
       </div>
 
-      <motion.div 
+      <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="max-w-3xl w-full text-center space-y-8 relative z-10"
+        className="w-full max-w-xl relative z-10 text-center space-y-8"
       >
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10 text-xs font-mono tracking-widest text-white/50 uppercase">
-          <Sparkles className="w-3 h-3 text-yellow-500" />
-          Every Photo is a Level
-        </div>
-
-        <div className="space-y-2">
-          <h1 className="text-7xl md:text-8xl font-black tracking-tighter uppercase leading-[0.85]">
+        <div className="space-y-4">
+          <h1 className="text-6xl font-black uppercase tracking-tighter leading-none">
             Photo<span className="text-blue-500">Level</span>
           </h1>
-          <p className="text-xl text-white/60 font-light max-w-xl mx-auto">
-            Transform your world into a traversal puzzle. Upload a photo to begin your adventure.
+          <p className="text-white/40 text-lg font-medium tracking-tight">
+            Turn your world into an adventure.
           </p>
         </div>
 
-        <motion.label
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-          className={`
-            relative block w-full aspect-[16/9] max-h-[400px] cursor-pointer rounded-3xl border-2 border-dashed 
-            transition-all duration-300 group overflow-hidden
-            ${isDragging ? "border-blue-500 bg-blue-500/10" : "border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/[0.07]"}
-          `}
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
+        <div 
+          onClick={() => fileInputRef.current?.click()}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            e.preventDefault();
+            if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+          }}
+          className="group relative h-80 rounded-[2.5rem] border-2 border-dashed border-white/10 hover:border-blue-500/50 bg-white/[0.02] hover:bg-white/[0.04] transition-all cursor-pointer flex flex-col items-center justify-center gap-6"
         >
+          <div className="p-6 rounded-full bg-white/5 group-hover:scale-110 group-hover:bg-blue-500/20 transition-all">
+            <Upload className="w-10 h-10 text-white/40 group-hover:text-blue-400" />
+          </div>
+          <div className="space-y-1">
+            <p className="text-xl font-bold text-white group-hover:text-blue-400">Upload a Photo</p>
+            <p className="text-sm text-white/30 font-medium">Drag and drop or click to browse</p>
+          </div>
           <input 
             type="file" 
+            ref={fileInputRef} 
             className="hidden" 
             accept="image/*" 
-            onChange={handleFileChange}
+            onChange={(e) => {
+              if (e.target.files?.[0]) handleFile(e.target.files[0]);
+            }} 
           />
-          
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-4">
-            <div className={`p-6 rounded-full transition-all duration-300 ${isDragging ? "bg-blue-500 scale-110" : "bg-white/5 group-hover:scale-110"}`}>
-              {isDragging ? <Upload className="w-8 h-8" /> : <ImageIcon className="w-8 h-8 text-white/40 group-hover:text-white" />}
-            </div>
-            <div className="space-y-1">
-              <p className="text-lg font-medium">Click or drag photo here</p>
-              <p className="text-sm text-white/40">Bookshelves, buildings, and landscapes work best</p>
-            </div>
-          </div>
-
-          <div className="absolute bottom-4 left-0 w-full flex justify-center gap-4 opacity-40 text-[10px] uppercase tracking-widest font-mono">
-            <span>JPG</span>
-            <span>PNG</span>
-            <span>WEBP</span>
-          </div>
-        </motion.label>
-
-        <div className="flex flex-wrap justify-center gap-8 pt-4">
-          <div className="flex items-center gap-3 text-left">
-            <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-blue-500 font-bold border border-white/10">01</div>
-            <div>
-              <p className="text-xs uppercase tracking-wider font-bold">Snap it</p>
-              <p className="text-[10px] text-white/40 uppercase tracking-tighter">Capture any image</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-3 text-left">
-            <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-blue-500 font-bold border border-white/10">02</div>
-            <div>
-              <p className="text-xs uppercase tracking-wider font-bold">Build it</p>
-              <p className="text-[10px] text-white/40 uppercase tracking-tighter">AI detects platforms</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-3 text-left">
-            <div className="w-10 h-10 rounded-xl bg-white/5 flex items-center justify-center text-blue-500 font-bold border border-white/10">03</div>
-            <div>
-              <p className="text-xs uppercase tracking-wider font-bold">Play it</p>
-              <p className="text-[10px] text-white/40 uppercase tracking-tighter">Reach the exit</p>
-            </div>
-          </div>
         </div>
+
+        <AnimatePresence>
+          {error && (
+            <motion.div 
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 10 }}
+              className="p-4 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center gap-4 text-left"
+            >
+              <AlertCircle className="w-6 h-6 text-red-500 shrink-0" />
+              <p className="text-sm text-red-200 font-medium leading-relaxed">{error}</p>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <p className="text-white/20 text-xs font-bold uppercase tracking-widest pt-4">
+          Recommended: Landscapes, Interiors, or Objects with flat surfaces
+        </p>
       </motion.div>
     </div>
   );
