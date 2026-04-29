@@ -42,7 +42,7 @@ export default function HelpDialog({ isOpen, onClose }: HelpDialogProps) {
     {
       date: "2026-04-28",
       changes: [
-        "Initial prototype of PhotoLevel.",
+        "Initial prototype of CaptureQuest.",
         "Gemini level generation integration.",
         "Basic movement and physics."
       ]
@@ -152,7 +152,7 @@ export default function HelpDialog({ isOpen, onClose }: HelpDialogProps) {
                   <div className="space-y-6">
                     <div className="p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl">
                       <p className="text-xs text-blue-300 font-mono leading-relaxed">
-                        PhotoLevel Developer Suite provides real-time access to game state and level data.
+                        CaptureQuest Developer Suite provides real-time access to game state and level data.
                       </p>
                     </div>
                     

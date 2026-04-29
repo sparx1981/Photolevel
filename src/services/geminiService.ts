@@ -1,6 +1,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { LevelData } from "../types";
 
+// NO httpOptions — let SDK use default v1beta
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
 export function getFallbackLevel(): LevelData {
@@ -29,185 +30,203 @@ export function getFallbackLevel(): LevelData {
 export async function generateLevelFromImage(base64Image: string, mimeType: string): Promise<LevelData> {
   console.log("[Gemini] Starting level generation...");
 
-  // Gemini returns normalised 0–1 coordinates; we convert to pixels after
   const LEVEL_W = 1280;
   const LEVEL_H = 720;
 
-  const prompt = `You are analysing a photograph to extract platform positions for a 2D platformer.
-Return NORMALISED coordinates (0.0–1.0 fractions of image dimensions).
+  const prompt = `You are analysing a photograph to place platforms for a 2D platformer game.
+Return NORMALISED coordinates (0.0–1.0). (0,0) = top-left. (1,1) = bottom-right.
 
 ══════════════════════════════════════════════
-PERSPECTIVE CORRECTION — READ THIS FIRST
+CRITICAL: HOW TO MEASURE SURFACE Y POSITION
 ══════════════════════════════════════════════
-Many photos have perspective distortion — surfaces that are actually horizontal appear to angle
-upward or downward because of the camera viewpoint. You must correct for this:
+For every surface you find, you must report TWO y values:
+  normY_top    = the y coordinate of the TOPMOST visible pixel of this surface
+  normY_bottom = the y coordinate of the BOTTOMMOST visible pixel of this surface face
 
-- If a surface appears to slope upward toward the centre of the image (converging perspective),
-  its TRUE angle is closer to 0° than it appears. Reduce your angle estimate by 30–50%.
-- The normY of a surface is the position of its TOP EDGE, not its visual midpoint.
-  For a countertop, normY is where a glass sitting on it would touch — not the middle of the
-  counter's visible face.
-- Interior photos (rooms, lobbies) almost always have strong perspective. Be conservative with
-  angle values — most real horizontal surfaces are within ±8° even if they look more tilted.
-- For surfaces in the FOREGROUND (normX near 0.0 or 1.0, or normY > 0.6), perspective
-  distortion is strongest. These surfaces tend to appear much steeper than they are.
+EXAMPLE — A kitchen countertop:
+  The top edge of the counter (where objects sit) is at normY_top = 0.64
+  The bottom edge of the counter face (where it meets the cabinets below) is at normY_bottom = 0.71
+  The platform goes at normY_top = 0.64, NOT at the midpoint (0.675)
 
-══════════════════════════════════════════════
-SURFACE DETECTION — SCAN IN 4 BANDS
-══════════════════════════════════════════════
+EXAMPLE — An overhead structural beam:
+  Top edge visible at normY_top = 0.28
+  Bottom edge of beam face at normY_bottom = 0.33
+  Platform goes at normY_top = 0.28
 
-Work through the image band by band. For each band, list every flat/near-flat surface visible.
-
-BAND A — normY 0.00–0.25 (top quarter):
-Ceilings, overhead beams, skylights, high ledges, roof edges, upper balconies.
-
-BAND B — normY 0.25–0.50 (upper-mid):
-Wall ledges, upper railings, window sills, structural beams, upper balcony floors, mid-level shelves.
-
-BAND C — normY 0.50–0.75 (lower-mid):
-Countertops, worktops, tabletops, islands, stair treads, sofa backs, desk surfaces.
-IMPORTANT: For perspective-heavy interior shots, countertops that appear to angle sharply
-toward the vanishing point should be assigned angle = 0 or ±3°, not ±15°.
-
-BAND D — normY 0.75–1.00 (bottom quarter):
-Floor level, low platforms, ground elements.
-ALWAYS include: normX=0.5, normY=0.98, normWidth=1.0, angle=0, theme="dirt_ground", label="floor".
+SELF-CHECK before submitting each surface:
+  Ask: "Is normY_top truly the highest pixel row of this object's visible face?"
+  Ask: "Is normY_bottom truly the lowest pixel row of this object's visible face?"
+  If normY_bottom - normY_top < 0.02, the surface is likely too thin to be real — reconsider.
+  If normY_bottom - normY_top > 0.15, you may have included background — narrow the measurement.
 
 ══════════════════════════════════════════════
-COMMON MISTAKES TO AVOID
+PERSPECTIVE CORRECTION
 ══════════════════════════════════════════════
-- DO NOT place platforms on reflections in glass or mirrors — only on the real physical surface.
-- DO NOT place platforms on perspective construction lines or drawn lines that aren't real edges.
-- DO NOT place platforms on the underside of a surface — only on the TOP where something could rest.
-- If a surface is partially obscured by another object, estimate only the visible walkable portion.
-- Ceiling surfaces are NOT platforms (player can't stand on them) unless the game specifically supports it.
-- When in doubt about whether a surface is real vs reflected/drawn, omit it rather than guess.
-- normY must be the TOP EDGE of the surface — not its visual centre, not its bottom edge.
-  A countertop at 74% down the image has normY ≈ 0.74, not 0.77 or 0.70.
+Interior and architectural photos have strong perspective:
+- Most real horizontal surfaces are within ±6° angle.
+- Reduce apparent angle by 50–60% to correct for perspective distortion.
+- Hard cap: ±18°. Foreground objects (normX < 0.15 or > 0.85): assign angle = 0°.
+- DO NOT create platforms on perspective construction lines — only on real physical surfaces.
+- DO NOT create platforms on reflections in glass, mirrors, or polished floors.
 
 ══════════════════════════════════════════════
-PER-SURFACE OUTPUT
+SURFACE DETECTION — SCAN 4 BANDS
 ══════════════════════════════════════════════
-For each surface provide:
-- normX: horizontal centre (0=left, 1=right)
-- normY: TOP EDGE of the walkable surface (the contact point, not visual midpoint)
-- normWidth: length of walkable portion only (exclude parts hidden behind other objects)
-- angle: corrected tilt in degrees. Positive = right side lower. APPLY PERSPECTIVE CORRECTION.
-  Hard cap: ±20°. Typical interior surface: ±5°. Only use >10° for genuinely steep ramps.
+BAND A (normY 0.00–0.25): Overhead beams, skylights, high ledges, roof edges, upper balconies.
+BAND B (normY 0.25–0.50): Wall ledges, upper railings, window sills, beams, high shelves.
+BAND C (normY 0.50–0.75): Countertops, tabletops, islands, stair treads, sofa backs.
+  KEY: In kitchen/interior images, countertop top-edges are typically normY 0.60–0.72.
+  The visual face of a counter extends BELOW the top edge — do not report the face midpoint.
+BAND D (normY 0.75–1.00): Floor level, low elements.
+  MANDATORY: normX=0.5, normY_top=0.97, normY_bottom=0.99, normWidth=1.0,
+              angle=0, theme="dirt_ground", label="floor".
+
+══════════════════════════════════════════════
+OUTPUT RULES
+══════════════════════════════════════════════
+For each surface:
+- normX: horizontal centre of the walkable portion
+- normY_top: topmost pixel row of the surface face (THIS is used for platform position)
+- normY_bottom: bottommost pixel row of the surface face (used for validation only)
+- normWidth: length of walkable portion only — exclude occluded sections
+- angle: perspective-corrected. Most interior surfaces: 0–6°. Ramps only: up to 18°.
 - theme: stone_ledge | wooden_plank | metal_platform | rooftop | tree_branch | rock_outcrop | ice_shelf | dirt_ground | generic
-- label: concise description, e.g. "left countertop section", "upper mezzanine floor", "stair tread mid"
+- label: precise name, e.g. "kitchen island top", "left countertop section", "upper duct beam"
 
-══════════════════════════════════════════════
-TRAVERSABILITY (check after listing all surfaces)
-══════════════════════════════════════════════
-Verify a path exists from spawn (normX=0.12, normY=0.93) to exit (normX>0.75, normY<0.38).
-Max vertical gap between consecutive platforms: normY difference > 0.22 needs a bridge.
-Max horizontal gap: normX gap > 0.21 needs a bridge.
-Add bridge platforms ONLY where gaps exist. Use theme="generic", label="bridge", normWidth=0.09.
-DO NOT add bridges if the level is already completable without them.
+PRIORITY ORDER:
+1. Real surfaces visible in the image (measure carefully with dual-edge method above)
+2. Bridge platforms ONLY if a genuine traversal gap exists (normY gap > 0.22 OR normX gap > 0.21)
+3. DO NOT add bridges if the level is completable without them
 
-Return ONLY valid JSON. No explanation text.`;
+Spawn: normX=0.12, normY_top=0.93. Exit: normX>0.75, normY_top<0.38 on a real surface.
+Total platforms: 6–12.
+
+Return ONLY valid JSON. No explanation.`;
 
   const platformThemeEnum = [
     "stone_ledge","wooden_plank","metal_platform","rooftop",
     "tree_branch","rock_outcrop","ice_shelf","dirt_ground","generic"
   ];
 
-  // Schema uses normalised fields
   const normPlatformSchema = {
     type: Type.OBJECT,
-    required: ["id","normX","normY","normWidth","angle","theme","label"],
+    required: ["id", "normX", "normY_top", "normY_bottom", "normWidth", "angle", "theme", "label"],
     properties: {
-      id:        { type: Type.STRING },
-      normX:     { type: Type.NUMBER },
-      normY:     { type: Type.NUMBER },
-      normWidth: { type: Type.NUMBER },
-      angle:     { type: Type.NUMBER },
-      theme:     { type: Type.STRING, enum: platformThemeEnum },
-      label:     { type: Type.STRING }
+      id:           { type: Type.STRING },
+      normX:        { type: Type.NUMBER },
+      normY_top:    { type: Type.NUMBER },
+      normY_bottom: { type: Type.NUMBER },
+      normWidth:    { type: Type.NUMBER },
+      angle:        { type: Type.NUMBER },
+      theme:        { type: Type.STRING, enum: platformThemeEnum },
+      label:        { type: Type.STRING }
     }
   };
 
-  try {
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash-preview-04-17",
-      contents: [{ parts: [{ inlineData: { data: base64Image, mimeType } }, { text: prompt }] }],
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          required: ["platforms","spawn","exit","theme"],
-          properties: {
-            theme: {
-              type: Type.OBJECT,
-              required: ["name","primaryColour","accentColour","skyTint","description"],
-              properties: {
-                name:          { type: Type.STRING },
-                primaryColour: { type: Type.STRING },
-                accentColour:  { type: Type.STRING },
-                skyTint:       { type: Type.STRING },
-                description:   { type: Type.STRING }
-              }
-            },
-            platforms: { type: Type.ARRAY, items: normPlatformSchema },
-            spawn: {
-              type: Type.OBJECT, required: ["normX","normY"],
-              properties: { normX: { type: Type.NUMBER }, normY: { type: Type.NUMBER } }
-            },
-            exit: {
-              type: Type.OBJECT, required: ["normX","normY"],
-              properties: { normX: { type: Type.NUMBER }, normY: { type: Type.NUMBER } }
-            }
-          }
+  const responseSchema = {
+    type: Type.OBJECT,
+    required: ["platforms","spawn","exit","theme"],
+    properties: {
+      theme: {
+        type: Type.OBJECT,
+        required: ["name","primaryColour","accentColour","skyTint","description"],
+        properties: {
+          name:          { type: Type.STRING },
+          primaryColour: { type: Type.STRING },
+          accentColour:  { type: Type.STRING },
+          skyTint:       { type: Type.STRING },
+          description:   { type: Type.STRING }
         }
-      }
-    });
-
-    // ── Convert normalised coords to pixel coords ──────────────────────────
-    const raw = JSON.parse(response.text || "{}");
-    console.log("[Gemini] Raw normalised response:", raw);
-
-    const PLATFORM_HEIGHT_PX = 10;
-
-    const platforms = (raw.platforms ?? []).map((p: any, i: number) => ({
-      id:       p.id ?? `p${i}`,
-      x:        Math.round(p.normX     * LEVEL_W),
-      y:        Math.round(p.normY     * LEVEL_H),
-      width:    Math.round(p.normWidth * LEVEL_W),
-      height:   PLATFORM_HEIGHT_PX,
-      angle:    p.angle ?? 0,
-      theme:    p.theme ?? "generic",
-      label:    p.label ?? "",
-      // Preserve normalised values for debug overlay
-      normX:    p.normX,
-      normY:    p.normY,
-      normWidth:p.normWidth,
-    }));
-
-    const levelData: LevelData = {
-      width:  LEVEL_W,
-      height: LEVEL_H,
-      theme:  raw.theme,
-      platforms,
-      walls: [],
+      },
+      platforms: { type: Type.ARRAY, items: normPlatformSchema },
       spawn: {
-        x: Math.round((raw.spawn?.normX ?? 0.12) * LEVEL_W),
-        y: Math.round((raw.spawn?.normY ?? 0.93) * LEVEL_H)
+        type: Type.OBJECT, 
+        required: ["normX","normY_top"],
+        properties: { normX: { type: Type.NUMBER }, normY_top: { type: Type.NUMBER } }
       },
       exit: {
-        x: Math.round((raw.exit?.normX ?? 0.88) * LEVEL_W),
-        y: Math.round((raw.exit?.normY ?? 0.25) * LEVEL_H)
+        type: Type.OBJECT, 
+        required: ["normX","normY_top"],
+        properties: { normX: { type: Type.NUMBER }, normY_top: { type: Type.NUMBER } }
       }
-    };
+    }
+  };
 
-    console.log("[Gemini] Converted level — platforms:", levelData.platforms.length);
-    levelData.platforms.forEach(p =>
-      console.log(`  [${p.label}] x=${p.x} y=${p.y} w=${p.width} angle=${p.angle}°`)
-    );
+  const MODELS_TO_TRY = [
+    "gemini-2.5-flash",          // stable alias, no date suffix
+    "gemini-2.0-flash",          // previous working model
+    "gemini-1.5-flash",          // reliable fallback
+  ];
 
-    return levelData;
-  } catch(e) {
-    console.error("[Gemini] Error:", e);
-    throw e;
+  let lastError: any;
+  for (const modelName of MODELS_TO_TRY) {
+    try {
+      console.log(`[Gemini] Trying model: ${modelName}`);
+      const response = await ai.models.generateContent({
+        model: modelName,
+        contents: [{ parts: [{ inlineData: { data: base64Image, mimeType } }, { text: prompt }] }],
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: responseSchema
+        }
+      });
+
+      const raw = JSON.parse(response.text || "{}");
+      console.log(`[Gemini] Success with model: ${modelName}. Raw response:`, raw);
+
+      const PLATFORM_HEIGHT_PX = 10;
+
+      const platforms = (raw.platforms ?? []).map((p: any, i: number) => {
+        const normYTop    = p.normY_top    ?? p.normY ?? 0.5;
+        const normYBottom = p.normY_bottom ?? (normYTop + 0.05);
+
+        // Validation: if bottom is above top (Gemini confused them), swap
+        const validTop    = Math.min(normYTop, normYBottom);
+        const validBottom = Math.max(normYTop, normYBottom);
+
+        // Sanity-clamp: top edge must be the platform position
+        const finalNormY = Math.min(Math.max(validTop, 0), 0.99);
+
+        console.log(`  [${p.label ?? "?"}] normY_top=${normYTop.toFixed(3)} normY_bottom=${normYBottom.toFixed(3)} → y=${Math.round(finalNormY * LEVEL_H)}px`);
+
+        return {
+          id:        p.id ?? `p${i}`,
+          x:         Math.round(p.normX     * LEVEL_W),
+          y:         Math.round(finalNormY  * LEVEL_H),
+          width:     Math.round(p.normWidth * LEVEL_W),
+          height:    PLATFORM_HEIGHT_PX,
+          angle:     p.angle ?? 0,
+          theme:     p.theme ?? "generic",
+          label:     p.label ?? "",
+          normX:     p.normX,
+          normY:     finalNormY,
+          normWidth: p.normWidth,
+        };
+      });
+
+      const levelData: LevelData = {
+        width:  LEVEL_W,
+        height: LEVEL_H,
+        theme:  raw.theme,
+        platforms,
+        walls: [],
+        spawn: {
+          x: Math.round((raw.spawn?.normX     ?? 0.12) * LEVEL_W),
+          y: Math.round((raw.spawn?.normY_top ?? 0.93) * LEVEL_H)
+        },
+        exit: {
+          x: Math.round((raw.exit?.normX     ?? 0.88) * LEVEL_W),
+          y: Math.round((raw.exit?.normY_top ?? 0.25) * LEVEL_H)
+        }
+      };
+
+      return levelData;
+    } catch (e: any) {
+      console.warn(`[Gemini] Model ${modelName} failed:`, e?.message ?? e);
+      lastError = e;
+    }
   }
+
+  console.error("[Gemini] All models failed:", lastError);
+  throw lastError;
 }
