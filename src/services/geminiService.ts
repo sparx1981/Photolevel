@@ -289,16 +289,55 @@ Return ONLY valid JSON. No explanation.`;
       const overlap = Math.max(0, Math.min(pR, e.x + e.width/2) - Math.max(pL, e.x - e.width/2));
       return overlap / Math.min(p.width, e.width) > 0.5;
     });
-    if (conflict) {
-      console.log(`[Gemini] Deduped "${p.label}" (overlaps "${conflict.label}")`);
-    } else {
+    if (!conflict) {
       deduped.push(p);
     }
   }
 
+  // ── Enforce minimum horizontal gap between same-height platforms ─────────
+  // Player physics body is 30px wide — gap must be larger than this
+  const MIN_GAP_PX = 48;
+
+  for (let i = 0; i < deduped.length; i++) {
+    for (let j = i + 1; j < deduped.length; j++) {
+      const a = deduped[i];
+      const b = deduped[j];
+      // Skip floor and platforms at clearly different heights
+      if (a.theme === "dirt_ground" || b.theme === "dirt_ground") continue;
+      if (Math.abs(a.y - b.y) > 30) continue;
+
+      // Identify left and right platform by centre x
+      const left  = a.x <= b.x ? a : b;
+      const right = a.x <= b.x ? b : a;
+
+      const leftRightEdge  = left.x  + left.width  / 2;  // right edge of left platform
+      const rightLeftEdge  = right.x - right.width / 2;  // left edge of right platform
+      const gap = rightLeftEdge - leftRightEdge;
+
+      if (gap < MIN_GAP_PX) {
+        const deficit  = MIN_GAP_PX - gap;
+        const trimEach = Math.ceil(deficit / 2) + 2;  // extra 2px buffer
+
+        // Trim left platform's right edge — keep left edge fixed
+        const leftFixedL  = left.x - left.width / 2;
+        left.width  = Math.max(20, left.width - trimEach);
+        left.x      = leftFixedL + left.width / 2;
+
+        // Trim right platform's left edge — keep right edge fixed
+        const rightFixedR = right.x + right.width / 2;
+        right.width = Math.max(20, right.width - trimEach);
+        right.x     = rightFixedR - right.width / 2;
+
+        console.log(
+          `[Gemini] Gap enforced: "${left.label}" ↔ "${right.label}" ` +
+          `(was ${gap.toFixed(0)}px → ${MIN_GAP_PX}px)`
+        );
+      }
+    }
+  }
+
   // ── Unconditional floor guarantee ────────────────────────────────────────
-  // Always ensure a ground platform exists. Gemini sometimes omits it on
-  // person/close-up photos where no clear ground is visible.
+  // Always ensure a ground platform exists.
   const hasFloor = deduped.some(p => p.theme === "dirt_ground");
   if (!hasFloor) {
     console.warn("[Gemini] No floor found — injecting guaranteed ground platform");
@@ -333,149 +372,5 @@ Return ONLY valid JSON. No explanation.`;
       x: Math.round((raw.exit?.normX ?? 0.88) * LEVEL_W),
       y: Math.round((raw.exit?.normY ?? 0.25) * LEVEL_H)
     }
-  };
-}
-
-export async function generateRefinedLevel(
-  base64Image: string,
-  mimeType: string,
-  edgeSummary: string,
-  existingLevel: LevelData
-): Promise<LevelData> {
-  console.log("[Gemini] Starting refinement pass with edge data...");
-
-  const prompt = `You are refining platform positions for a 2D platformer.
-
-A pixel-level edge detector has already run on this image and found these horizontal edges:
-${edgeSummary}
-
-Each entry is: { normX, normY, normWidth, strength }
-- normX/normY/normWidth are normalised 0–1 image coordinates
-- strength is 0–1 (higher = clearer, more defined edge)
-- These coordinates are PIXEL-ACCURATE — prefer them over visual estimation
-
-Your task:
-1. Look at the image. For each detected edge, decide if it corresponds to a real
-   walkable surface (countertop, shelf, ledge, roof, table, floor element).
-2. Accept edges that match real surfaces. You may adjust normY by ±0.015 maximum.
-3. Reject edges on: glass, reflections, ceilings, X-beams, vertical surfaces, humans.
-4. For accepted edges, assign theme and label based on what you see.
-5. Ensure the floor platform (theme=dirt_ground, normY=0.97, normWidth=1.0) is always included.
-6. Check traversability: spawn normX=0.12 normY=0.93 → exit normX>0.70 normY<0.42.
-   Add max 2 bridge platforms (normWidth=0.08, theme=generic) only if needed.
-   Max vertical gap: 0.17, max horizontal edge-to-edge gap: 0.19.
-
-Angle rule: Assign accurate angles. Rooftops/ramps: ±8–20°. Flat surfaces: ±0–4°.
-Width rule: normWidth max 0.18 per section. Split long surfaces.
-
-Return ONLY valid JSON in the same schema as the original level.`;
-
-  const platformThemeEnum = [
-    "stone_ledge","wooden_plank","metal_platform","rooftop",
-    "tree_branch","rock_outcrop","ice_shelf","dirt_ground","generic"
-  ];
-  const normPlatformSchema = {
-    type: Type.OBJECT,
-    required: ["id","normX","normY","normWidth","angle","theme","label"],
-    properties: {
-      id: {type:Type.STRING}, normX:{type:Type.NUMBER}, normY:{type:Type.NUMBER},
-      normWidth:{type:Type.NUMBER}, angle:{type:Type.NUMBER},
-      theme:{type:Type.STRING, enum:platformThemeEnum}, label:{type:Type.STRING}
-    }
-  };
-
-  const MODELS_TO_TRY = ["gemini-2.5-flash","gemini-2.0-flash","gemini-1.5-flash"];
-  let raw: any = null;
-  for (const modelName of MODELS_TO_TRY) {
-    try {
-      console.log(`[Gemini Refine] Trying: ${modelName}`);
-      const response = await ai.models.generateContent({
-        model: modelName,
-        contents: {
-          parts: [
-            { inlineData: { data: base64Image, mimeType } },
-            { text: prompt }
-          ]
-        },
-        config: {
-          // @ts-ignore
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            required: ["platforms","spawn","exit","theme"],
-            properties: {
-              theme: {
-                type: Type.OBJECT,
-                required: ["name","primaryColour","accentColour","skyTint","description"],
-                properties: {
-                  name:{type:Type.STRING}, primaryColour:{type:Type.STRING},
-                  accentColour:{type:Type.STRING}, skyTint:{type:Type.STRING},
-                  description:{type:Type.STRING}
-                }
-              },
-              platforms: { type: Type.ARRAY, items: normPlatformSchema },
-              spawn: { type:Type.OBJECT, required:["normX","normY"],
-                properties:{normX:{type:Type.NUMBER},normY:{type:Type.NUMBER}} },
-              exit: { type:Type.OBJECT, required:["normX","normY"],
-                properties:{normX:{type:Type.NUMBER},normY:{type:Type.NUMBER}} }
-            }
-          }
-        }
-      });
-      raw = JSON.parse(response.text || "{}");
-      console.log(`[Gemini Refine] Success with ${modelName}`);
-      break;
-    } catch(e: any) {
-      console.warn(`[Gemini Refine] ${modelName} failed:`, e?.message ?? e);
-    }
-  }
-
-  if (!raw) {
-    console.error("[Gemini Refine] All models failed — keeping original level");
-    return existingLevel;
-  }
-
-  // Same conversion + dedup + floor guarantee as generateLevelFromImage
-  const MAX_PLATFORM_PX = Math.round(0.18 * LEVEL_W);
-  const platforms = (raw.platforms ?? []).map((p: any, i: number) => {
-    const isGround = p.theme === "dirt_ground";
-    return {
-      id: p.id ?? `r${i}`,
-      x: Math.round((p.normX ?? 0.5) * LEVEL_W),
-      y: Math.round((p.normY ?? 0.5) * LEVEL_H),
-      width: isGround ? LEVEL_W : Math.min(Math.round((p.normWidth ?? 0.15) * LEVEL_W), MAX_PLATFORM_PX),
-      height: PLATFORM_HEIGHT_PX,
-      angle: typeof p.angle === "number" ? parseFloat(p.angle.toFixed(1)) : 0,
-      theme: p.theme ?? "generic",
-      label: p.label ?? "",
-      normX: p.normX, normY: p.normY, normWidth: p.normWidth,
-    };
-  });
-
-  const deduped: typeof platforms = [];
-  for (const p of platforms) {
-    const pL = p.x - p.width/2, pR = p.x + p.width/2;
-    const conflict = deduped.find(e => {
-      if (Math.abs(e.y - p.y) > 18) return false;
-      const overlap = Math.max(0, Math.min(pR, e.x+e.width/2) - Math.max(pL, e.x-e.width/2));
-      return overlap / Math.min(p.width, e.width) > 0.5;
-    });
-    if (!conflict) deduped.push(p);
-  }
-
-  if (!deduped.some(p => p.theme === "dirt_ground")) {
-    deduped.push({
-      id:"guaranteed_floor", x:LEVEL_W/2, y:Math.round(0.97*LEVEL_H),
-      width:LEVEL_W, height:PLATFORM_HEIGHT_PX, angle:0, theme:"dirt_ground",
-      label:"floor", normX:0.5, normY:0.97, normWidth:1.0
-    });
-  }
-
-  return {
-    width: LEVEL_W, height: LEVEL_H,
-    theme: raw.theme ?? existingLevel.theme,
-    platforms: deduped, walls: [],
-    spawn: { x: Math.round((raw.spawn?.normX ?? 0.12)*LEVEL_W), y: Math.round((raw.spawn?.normY ?? 0.93)*LEVEL_H) },
-    exit:  { x: Math.round((raw.exit?.normX  ?? 0.88)*LEVEL_W), y: Math.round((raw.exit?.normY  ?? 0.25)*LEVEL_H) }
   };
 }

@@ -1,6 +1,6 @@
 # PhotoLevel Product Specification
 
-> **Last Updated:** 2026-04-29 | **Changed:** Implemented hybrid AI pipeline combining client-side Sobel edge detection (Canvas API) with Gemini classification to achieve pixel-perfect platform alignment.
+> **Last Updated:** 2026-04-29 | **Changed:** Implemented portal device redesign, ambient tinting system, mobile touch controls, and persistent debug/control toggles. Removed two-pass refinement remnants for a leaner single-pass pipeline.
 
 ## Architecture Overview
 PhotoLevel is a browser-based 2D platformer where levels are dynamically designed by Gemini AI by identifying real-world surfaces in user-uploaded images and transforming them into playable platforms. Levels feature progressive difficulty scaling on replay.
@@ -22,49 +22,33 @@ PhotoLevel is a browser-based 2D platformer where levels are dynamically designe
 1. **Edge Detection (Pixel-Level):** A Sobel horizontal gradient filter runs on a hidden canvas to extract high-contrast horizontal line segments. This provides the *exact* physical location of potential platforms.
 2. **AI Classification:** The detected line data (normX, normY, normWidth) is sent to Gemini alongside the image. Gemini's role is narrowed to *classification*: deciding if a line is a real walkable surface, assigning themes/labels, and adding bridges.
 3. **Accuracy Enforcement:** Gemini is forbidden from modifying detected coordinates (±0.02 tolerance max), virtually eliminating coordinate "drift" and floating platforms.
-4. **Collision Avoidance:** Guidelines strictly forbid placement on reflections, reflections in mirrors, or the underside of surfaces.
-5. **Traversability:** AI ensures a reachable path from spawn to exit by adding bridges where gaps exceed threshold values.
+4. **Traversability:** AI ensures a reachable path from spawn to exit by adding bridges where gaps exceed threshold values.
 
 ## Progressive Difficulty
 Replaying a photo increments the difficulty level, applying the following modifiers:
-- **Fragile Platforms:** Certain platforms (visually indicated by orange dashes) dissolve shortly after contact and respawn after a delay.
+- **Fragile Platforms:** Certain platforms dissolve shortly after contact and respawn after a delay. Visually indistinguishable from normal platforms until they begin to break.
 - **Patrolling Enemies:** Red "Astro-Guard" enemies patrol specific platforms. Contact results in immediate respawn.
-- **Platform Scaling:** Non-ground platforms become narrower at higher levels to test precision.
+- **Platform Scaling:** Platforms are 25% shorter (height 10) for a cleaner look. Non-ground platforms also become narrower at higher levels to test precision.
 - **Speed Multipliers:** Enemies move faster as level increases.
 
 ## Rendering Engine
 - **Background:** The raw user-uploaded image is used as the level background.
-  - **Alignment:** Background is loaded and scaled BEFORE content positioning to ensure 1:1 pixel parity between physics bodies and visual landmarks.
-- **Platforms:** Rendered as thin, theme-consistent slabs with depth effects:
-  - **Themed Materials:** Stone, wood, metal, rooftop, etc.
-  - **Visual Layers:** 3px bright highlight line, 7px semi-transparent body fill, and 5px dark underside depth strip.
-- **Fragile State:** Rapid orange flashing for cracking, fade-in for respawning.
-- **Enemies:** Capsule-based dark red sprites with glowing yellow eyes.
-- **Debug Overlay:** Every platform renders its AI-assigned label and y-coordinate for verification.
-
-## Physics Implementation
-- **Rotated Slabs:** All platforms support the `angle` property for realistic sloped movement.
-- **Tuned Constants:**
-  - Friction: 0.5 (Platforms) / 0.1 (Enemies).
-  - Slop: 0.02 for tight contact tolerance.
-  - Gravity: 1.25 for a snappy "platformer" feel.
-- **Camera Engine:**
-  - **Lerp:** 8% damping for smooth character follow.
-  - **Look-ahead:** Horizon shifts based on current X-velocity.
-  - **Clamping:** Strict boundary checks prevent showing black edges (off-canvas areas).
-
-## Advanced Gameplay Mechanics
-- **Coyote Time:** 140ms window to jump after leaving a platform.
-- **Jump Buffering:** 150ms window to register a jump input just before landing.
-- **Double Jump:** Allows a second, slightly weaker jump in mid-air once per airtime.
-- **Jump Indicator:** A visual blue pip above the player's head indicates air jump availability.
-- **Edge-Graze Detection:** triple-ray ground check (Centre, Left-Edge, Right-Edge) allows jumping even when only a corner of the character is touching a platform.
-- **Wall Interaction:** Wall sliding and wall jumping for vertical traversal.
+  - **Alignment:** Background is loaded and scaled BEFORE content positioning to ensure 1:1 pixel parity.
+- **Ambient Tinting:** Player and enemies are tinted with (30% white + 70% primary theme colour) to blend naturally into the scene's lighting.
+- **Portal Device:** The exit is a vertical charging station with a dark navy casing, dual green-glass windows, and blinking indicator lights at the base.
+- **Platforms:** Rendered as clean pill-shaped slabs with depth effects:
+  - **Visual Layers:** 3px top highlight, 10px semi-transparent body fill, and 4px underside depth strip.
+- **Debug Labels:** Optional text overlay (y-coordinate and label) toggled via settings.
 
 ## Controls & Shortcuts
-| Action | Key |
+| Action | Key / Control |
 | :--- | :--- |
-| Move | WASD / Arrows |
-| Jump | Space / W / Up |
+| Move | WASD / Arrows / Mobile Left-Right Buttons |
+| Jump | Space / W / Up / Mobile Jump Button |
 | Home | Return to Menu |
 | Help | Help & Resources |
+| Settings | Debug & Touch Control Toggles (Landing Screen) |
+
+## Implementation Details: Air Jump Feedback
+- **Flash Effect:** When the player performs an air jump, a blue flash effect is applied to the sprite. The sprite's tint is restored to the scene's `ambientTint` dynamically after the flash fades, ensuring the lighting remains consistent.
+- **Indicator:** A persistent blue pip above the player's head signals if an air jump is currently available.

@@ -4,10 +4,8 @@ import { GameCore } from "./GameCore";
 import { LevelData, DifficultyConfig, getDifficultyConfig } from "./types";
 import { 
   generateLevelFromImage, 
-  generateRefinedLevel,
   getFallbackLevel 
 } from "./services/geminiService";
-import { detectHorizontalEdges } from "./utils/edgeDetection";
 import LandingScreen from "./components/LandingScreen";
 import HelpDialog from "./components/HelpDialog";
 import LoadingScreen from "./components/LoadingScreen";
@@ -16,7 +14,7 @@ import { Home, Trophy, Skull, HelpCircle, RotateCcw, Flame } from "lucide-react"
 type AppState = "landing" | "loading" | "playing" | "won";
 
 // Standard Game View Component
-function GameView({ levelData, imagePreview, onWin, onDeath, onBack, deathCount, difficulty, onGameCoreReady }: { 
+function GameView({ levelData, imagePreview, onWin, onDeath, onBack, deathCount, difficulty, showDebugLabels, showMobileControls }: { 
   levelData: LevelData; 
   imagePreview: string; 
   onWin: (time: number) => void; 
@@ -24,7 +22,8 @@ function GameView({ levelData, imagePreview, onWin, onDeath, onBack, deathCount,
   onBack: () => void; 
   deathCount: number;
   difficulty: DifficultyConfig;
-  onGameCoreReady?: (core: GameCore) => void;
+  showDebugLabels: boolean;
+  showMobileControls: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const gameCoreRef = useRef<GameCore | null>(null);
@@ -38,16 +37,16 @@ function GameView({ levelData, imagePreview, onWin, onDeath, onBack, deathCount,
           imagePreview,
           onWin,
           onDeath,
-          difficulty
+          difficulty,
+          showDebugLabels
         );
-        if (onGameCoreReady) onGameCoreReady(gameCoreRef.current);
       }
     }, 100);
     return () => {
       clearTimeout(timer);
       gameCoreRef.current?.destroy();
     };
-  }, [levelData, imagePreview, difficulty]);
+  }, [levelData, imagePreview, difficulty, showDebugLabels]);
 
   return (
     <motion.div 
@@ -59,6 +58,44 @@ function GameView({ levelData, imagePreview, onWin, onDeath, onBack, deathCount,
         ref={containerRef} 
         className="flex-1 bg-[#050505] relative w-full h-full" 
       />
+
+      {showMobileControls && (
+        <div className="absolute bottom-0 left-0 right-0 z-30 flex justify-between items-end px-5 pb-6 pointer-events-none select-none">
+          {/* Left / Right */}
+          <div className="flex gap-3 pointer-events-auto">
+            <button
+              onPointerDown={() => gameCoreRef.current?.setKey('ArrowLeft', true)}
+              onPointerUp={() => gameCoreRef.current?.setKey('ArrowLeft', false)}
+              onPointerLeave={() => gameCoreRef.current?.setKey('ArrowLeft', false)}
+              onPointerCancel={() => gameCoreRef.current?.setKey('ArrowLeft', false)}
+              className="w-16 h-16 rounded-full bg-white/10 border border-white/20 backdrop-blur-sm
+                        flex items-center justify-center text-white/80 text-2xl
+                        active:bg-white/25 active:scale-95 transition-all"
+            >◀</button>
+            <button
+              onPointerDown={() => gameCoreRef.current?.setKey('ArrowRight', true)}
+              onPointerUp={() => gameCoreRef.current?.setKey('ArrowRight', false)}
+              onPointerLeave={() => gameCoreRef.current?.setKey('ArrowRight', false)}
+              onPointerCancel={() => gameCoreRef.current?.setKey('ArrowRight', false)}
+              className="w-16 h-16 rounded-full bg-white/10 border border-white/20 backdrop-blur-sm
+                        flex items-center justify-center text-white/80 text-2xl
+                        active:bg-white/25 active:scale-95 transition-all"
+            >▶</button>
+          </div>
+          {/* Jump */}
+          <div className="pointer-events-auto">
+            <button
+              onPointerDown={() => gameCoreRef.current?.setKey('Space', true)}
+              onPointerUp={() => gameCoreRef.current?.setKey('Space', false)}
+              onPointerLeave={() => gameCoreRef.current?.setKey('Space', false)}
+              onPointerCancel={() => gameCoreRef.current?.setKey('Space', false)}
+              className="w-20 h-20 rounded-full bg-blue-500/15 border border-blue-400/30 backdrop-blur-sm
+                        flex items-center justify-center text-blue-300 text-xs font-bold uppercase
+                        tracking-widest active:bg-blue-500/35 active:scale-95 transition-all"
+            >Jump</button>
+          </div>
+        </div>
+      )}
 
       {levelData.theme && (
         <div className="absolute bottom-6 left-6 z-20">
@@ -94,10 +131,37 @@ export default function App() {
   const [helpOpen, setHelpOpen] = useState(false);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [difficultyLevel, setDifficultyLevel] = useState(1);
-  const [refinedLevel, setRefinedLevel] = useState<LevelData | null>(null);
-  const [refineReady, setRefineReady] = useState(false);
-  const [refining, setRefining] = useState(false);
-  const activeCoreRef = useRef<GameCore | null>(null);
+  const [autoPlayTimer, setAutoPlayTimer] = useState(5);
+  const [showDebugLabels, setShowDebugLabels] = useState<boolean>(() =>
+    localStorage.getItem('cq_debug') === 'true'
+  );
+  const [showMobileControls, setShowMobileControls] = useState<boolean>(() =>
+    localStorage.getItem('cq_mobile') === 'true'
+  );
+
+  const toggleDebug = () => setShowDebugLabels(prev => {
+    localStorage.setItem('cq_debug', String(!prev)); return !prev;
+  });
+  const toggleMobile = () => setShowMobileControls(prev => {
+    localStorage.setItem('cq_mobile', String(!prev)); return !prev;
+  });
+
+  useEffect(() => {
+    if (state !== "won") return;
+    setAutoPlayTimer(5);
+    const interval = setInterval(() => {
+      setAutoPlayTimer(prev => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          setDeathCount(0);
+          setState("playing");
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [state]);
 
   useEffect(() => {
     (window as any).toggleHelp = () => setHelpOpen(prev => !prev);
@@ -117,46 +181,21 @@ export default function App() {
     setDeathCount(0);
     setElapsedTime(0);
     setDifficultyLevel(1);
-    setRefinedLevel(null);
-    setRefineReady(false);
-    setRefining(false);
     
     try {
       const preview = await readFileAsDataUrl(file);
       setImagePreview(preview);
       const base64 = preview.split(",")[1];
 
-      // ── Pass 1: Fast Gemini-only generation ────────────────────────────
-      let firstPassData: LevelData;
       try {
-        firstPassData = await generateLevelFromImage(base64, file.type, preview);
+        const data = await generateLevelFromImage(base64, file.type, preview);
+        setLevelData(data);
       } catch (error) {
         console.error("[App] Level generation failed, using fallback:", error);
-        firstPassData = getFallbackLevel();
+        setLevelData(getFallbackLevel());
       }
       
-      setLevelData(firstPassData);
       setState("playing");
-
-      // ── Pass 2: Background edge detection + refined Gemini call ────────
-      setRefining(true);
-      try {
-        // Run pixel-level edge detection
-        const edges = await detectHorizontalEdges(preview);
-        const edgeSummary = edges.slice(0, 20).map(e =>
-          `{normX:${e.normX.toFixed(3)}, normY:${e.normY.toFixed(3)}, normWidth:${e.normWidth.toFixed(3)}, strength:${e.strength.toFixed(2)}}`
-        ).join("\n");
-        console.log("[App] Edge detection complete, starting refinement pass...");
-
-        const refined = await generateRefinedLevel(base64, file.type, edgeSummary, firstPassData);
-        setRefinedLevel(refined);
-        setRefineReady(true);
-        console.log("[App] Refined level ready");
-      } catch(e) {
-        console.warn("[App] Refinement pass failed:", e);
-      } finally {
-        setRefining(false);
-      }
 
     } catch (error) {
       console.error("[App] Critical failure starting level:", error);
@@ -187,7 +226,13 @@ export default function App() {
                 <HelpCircle className="w-5 h-5 text-white/60" />
               </button>
             </div>
-            <LandingScreen onUpload={startLevel} />
+            <LandingScreen 
+              onUpload={startLevel} 
+              showDebugLabels={showDebugLabels}
+              onToggleDebug={toggleDebug}
+              showMobileControls={showMobileControls}
+              onToggleMobile={toggleMobile}
+            />
           </motion.div>
         )}
 
@@ -206,52 +251,21 @@ export default function App() {
         {state === "playing" && imagePreview && (
           <motion.div key="playing" className="w-full h-full relative">
             {levelData ? (
-              <>
-                <GameView
-                  levelData={levelData}
-                  imagePreview={imagePreview}
-                  onWin={handleWin}
-                  onDeath={handleDeath}
-                  onBack={() => { 
-                    setState("landing"); 
-                    setDifficultyLevel(1); 
-                    setRefinedLevel(null);
-                    setRefineReady(false);
-                  }}
-                  deathCount={deathCount}
-                  difficulty={getDifficultyConfig(difficultyLevel)}
-                  onGameCoreReady={(core) => { activeCoreRef.current = core; }}
-                />
-
-                {/* Refinement status banner */}
-                {refining && !refineReady && (
-                  <div className="fixed bottom-6 right-6 z-30 px-4 py-2 rounded-xl bg-black/60 border border-white/10 backdrop-blur-md flex items-center gap-3">
-                    <div className="w-3 h-3 rounded-full bg-blue-400 animate-pulse" />
-                    <span className="text-xs text-white/60 font-mono uppercase tracking-widest leading-none">Analysing edges…</span>
-                  </div>
-                )}
-
-                {refineReady && refinedLevel && (
-                  <div className="fixed bottom-6 right-6 z-30">
-                    <button
-                      onClick={() => {
-                        if (activeCoreRef.current && refinedLevel) {
-                          activeCoreRef.current.refreshLevel(refinedLevel);
-                          setLevelData(refinedLevel);
-                          setRefineReady(false);
-                        }
-                      }}
-                      className="px-5 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 border border-blue-400/30 backdrop-blur-md flex items-center gap-3 shadow-lg shadow-blue-900/30 transition-all active:scale-95 group"
-                    >
-                      <div className="relative">
-                        <div className="w-2 h-2 rounded-full bg-white animate-ping" />
-                        <div className="absolute inset-0 w-2 h-2 rounded-full bg-white" />
-                      </div>
-                      <span className="text-sm text-white font-bold uppercase tracking-widest">Update Map</span>
-                    </button>
-                  </div>
-                )}
-              </>
+              <GameView
+                levelData={levelData}
+                imagePreview={imagePreview}
+                onWin={handleWin}
+                onDeath={handleDeath}
+                onBack={() => { 
+                  setState("landing"); 
+                  setDifficultyLevel(1); 
+                  setAutoPlayTimer(5);
+                }}
+                deathCount={deathCount}
+                difficulty={getDifficultyConfig(difficultyLevel)}
+                showDebugLabels={showDebugLabels}
+                showMobileControls={showMobileControls}
+              />
             ) : null}
           </motion.div>
         )}
@@ -299,6 +313,9 @@ export default function App() {
                 >
                   <Flame className="w-5 h-5" />
                   Play Again — Difficulty {difficultyLevel}
+                  <span className="ml-auto text-xs font-mono bg-black/20 px-2 py-1 rounded-lg">
+                    {autoPlayTimer}s
+                  </span>
                 </button>
 
                 <div className="p-4 rounded-2xl bg-white/5 border border-white/5 text-left space-y-2">
@@ -316,7 +333,7 @@ export default function App() {
                 </div>
 
                 <button 
-                  onClick={() => { setState("landing"); setDifficultyLevel(1); }}
+                  onClick={() => { setState("landing"); setDifficultyLevel(1); setAutoPlayTimer(5); }}
                   className="w-full py-3 rounded-2xl bg-white/8 hover:bg-white/12 border border-white/10 text-white/60 text-sm font-medium uppercase tracking-widest transition-all flex items-center justify-center gap-2"
                 >
                   <RotateCcw className="w-4 h-4" />

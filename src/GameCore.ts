@@ -2,18 +2,6 @@ import * as PIXI from "pixi.js";
 import Matter from "matter-js";
 import { LevelData, DifficultyConfig, PlatformState } from "./types";
 
-const PLATFORM_THEME_COLOURS: Record<string, { top: number; side: number; highlight: number }> = {
-  stone_ledge:    { top: 0x8a8a7a, side: 0x4a4a3a, highlight: 0xb8b8a8 },
-  wooden_plank:   { top: 0xb87850, side: 0x6a3820, highlight: 0xd8a878 },
-  metal_platform: { top: 0x6888a0, side: 0x384858, highlight: 0x98c0d8 },
-  rooftop:        { top: 0x586878, side: 0x303848, highlight: 0x788898 },
-  tree_branch:    { top: 0x527038, side: 0x2e4018, highlight: 0x72a050 },
-  rock_outcrop:   { top: 0x726050, side: 0x402e20, highlight: 0x988070 },
-  ice_shelf:      { top: 0x98c8e0, side: 0x5888a8, highlight: 0xc8eeff },
-  dirt_ground:    { top: 0x7a5a2a, side: 0x402e10, highlight: 0xa07840 },
-  generic:        { top: 0x587080, side: 0x304050, highlight: 0x789ab0 },
-};
-
 export class GameCore {
   private app: PIXI.Application;
   private engine: Matter.Engine;
@@ -44,6 +32,14 @@ export class GameCore {
 
   private squashTimer = 0;
   private prevGroundedForSquash = false;
+  private shadowSprite: PIXI.Graphics | null = null;
+  private ambientTint = 0xffffff;
+  private showDebugLabels: boolean;
+
+  private exitLightsGraphics: PIXI.Graphics | null = null;
+  private exitLightPositions: Array<{ x: number; y: number; blinking: boolean }> = [];
+  private exitLightTimer  = 0;
+  private exitLightOn     = true;
 
   private onWin: (time: number) => void;
   private onDeath: () => void;
@@ -87,13 +83,15 @@ export class GameCore {
     imageBase64: string,
     onWin: (time: number) => void,
     onDeath: () => void,
-    difficulty: DifficultyConfig
+    difficulty: DifficultyConfig,
+    showDebugLabels: boolean = false
   ) {
     this.levelData = levelData;
     this.imageBase64 = imageBase64;
     this.onWin = onWin;
     this.onDeath = onDeath;
     this.difficulty = difficulty;
+    this.showDebugLabels = showDebugLabels;
 
     this.app = new PIXI.Application();
     this.engine = Matter.Engine.create({ gravity: { y: 1.25 } });
@@ -150,6 +148,23 @@ export class GameCore {
       // ── 4. Build all game content ──────────────────────────────────────────
       this.buildPhysics();
       this.createPlayer();
+
+      // ── Apply scene ambient lighting tint to player ──────────────────────────
+      const primHex = (this.levelData.theme?.primaryColour ?? "#ffffff").replace('#', '');
+      const pc = parseInt(primHex, 16) || 0xffffff;
+      const pr = (pc >> 16) & 0xff;
+      const pg = (pc >> 8)  & 0xff;
+      const pb =  pc        & 0xff;
+      // 30% white base + 70% scene colour — visible but not overwhelming
+      const tr = Math.min(255, Math.round(255 * 0.30 + pr * 0.70));
+      const tg = Math.min(255, Math.round(255 * 0.30 + pg * 0.70));
+      const tb = Math.min(255, Math.round(255 * 0.30 + pb * 0.70));
+      this.ambientTint = (tr << 16) | (tg << 8) | tb;
+      if (this.playerSprite) {
+        this.playerSprite.tint = this.ambientTint;
+        console.log(`[GameCore] Ambient tint applied: #${this.ambientTint.toString(16).padStart(6,'0')}`);
+      }
+
       this.createExit();
       this.spawnEnemies();
 
@@ -261,15 +276,26 @@ export class GameCore {
       });
       bodies.push(body);
 
-      const colours = PLATFORM_THEME_COLOURS[p.theme ?? "generic"];
+      const colours = this.getDynamicPlatformColours(p.theme ?? "generic");
+
+      if (p.theme !== "dirt_ground") {
+        const shadowGfx = new PIXI.Graphics();
+        shadowGfx.roundRect(-effectiveWidth / 2 + 5, 6, effectiveWidth - 4, 10, 4);
+        shadowGfx.fill({ color: 0x000000, alpha: 0.22 });
+        shadowGfx.x = p.x;
+        shadowGfx.y = p.y;
+        shadowGfx.rotation = angleRad;
+        this.worldContainer.addChild(shadowGfx);  // added first = renders behind platform
+      }
+
       const gfx = new PIXI.Graphics();
-      this.drawPlatformGfx(gfx, effectiveWidth, p.height, colours, isFragile);
+      this.drawPlatformGfx(gfx, effectiveWidth, p.height, colours, false); // always false — no visual difference
       gfx.x = p.x;
       gfx.y = p.y;
       gfx.rotation = angleRad;
       this.worldContainer.addChild(gfx);
 
-      if (p.label) {
+      if (this.showDebugLabels && p.label) {
         const shortLabel = p.label.length > 22 ? p.label.slice(0, 22) + "…" : p.label;
         const labelText = new PIXI.Text({
           text: `${shortLabel}  y=${p.y}`,
@@ -303,7 +329,7 @@ export class GameCore {
       bodies.push(body);
       
       const gfx = new PIXI.Graphics();
-      const colours = PLATFORM_THEME_COLOURS[w.theme ?? "generic"];
+      const colours = this.getDynamicPlatformColours(w.theme ?? "generic");
       gfx.rect(w.x - w.width / 2, w.y - w.height / 2, w.width, w.height);
       gfx.fill({ color: colours.side, alpha: 0.8 });
       this.worldContainer.addChild(gfx);
@@ -312,35 +338,59 @@ export class GameCore {
     Matter.Composite.add(this.engine.world, bodies);
   }
 
+  private getDynamicPlatformColours(theme: string): { top: number; side: number; highlight: number } {
+    const hex = (this.levelData.theme?.primaryColour ?? "#7a6a5a").replace('#', '');
+    const c = parseInt(hex, 16) || 0x7a6a5a;
+    let r = (c >> 16) & 0xff;
+    let g = (c >> 8)  & 0xff;
+    let b =  c        & 0xff;
+
+    // Per-type hue nudge — small shifts so types are distinguishable but all stay scene-toned
+    const shifts: Record<string, [number, number, number]> = {
+      stone_ledge:    [  5,   5,   5],
+      wooden_plank:   [ 22,   8, -18],  // warmer/more red
+      metal_platform: [ -8,   4,  18],  // cooler/more blue
+      rooftop:        [  0,   0,   0],
+      tree_branch:    [-12,  14,  -8],  // greener
+      rock_outcrop:   [ 12,   6,   0],
+      ice_shelf:      [-12,   6,  24],  // blue-white
+      dirt_ground:    [ 18,  10, -12],
+      generic:        [  0,   0,   0],
+    };
+    const [dr, dg, db] = shifts[theme] ?? [0, 0, 0];
+    r = Math.max(0, Math.min(255, r + dr));
+    g = Math.max(0, Math.min(255, g + dg));
+    b = Math.max(0, Math.min(255, b + db));
+
+    const lim = (v: number) => Math.max(0, Math.min(255, Math.round(v)));
+    const col = (r: number, g: number, b: number) => (lim(r) << 16) | (lim(g) << 8) | lim(b);
+    return {
+      highlight: col(r + 68, g + 62, b + 52),
+      top:       col(r + 26, g + 22, b + 16),
+      side:      col(r - 42, g - 36, b - 28),
+    };
+  }
+
   private drawPlatformGfx(
     gfx: PIXI.Graphics,
     width: number,
     height: number,
     colours: { top: number; side: number; highlight: number },
-    isFragile = false
+    isFragile = false // kept in signature but no longer changes visuals
   ) {
     gfx.clear();
-    const alpha = isFragile ? 0.65 : 1.0;
-    // Top highlight strip — rounded ends, thin
-    gfx.roundRect(-width / 2, -2, width, 3, 1.5);
-    gfx.fill({ color: isFragile ? 0xff8844 : colours.highlight, alpha: alpha * 0.95 });
-    // Body fill — rounded pill shape for clean ends
-    gfx.roundRect(-width / 2, 1, width, 6, 3);
-    gfx.fill({ color: colours.top, alpha: alpha * 0.72 });
-    // Depth/underside strip — rounded ends
-    gfx.roundRect(-width / 2, 7, width, 5, 2.5);
-    gfx.fill({ color: colours.side, alpha: alpha * 0.85 });
-    // Fragile dashes unchanged
-    if (isFragile) {
-      const dashW = 12, gapW = 6;
-      let cx = -width / 2;
-      while (cx < width / 2) {
-        const dw = Math.min(dashW, width / 2 - cx);
-        gfx.rect(cx, -3, dw, 2);
-        gfx.fill({ color: 0xff6600, alpha: 0.9 });
-        cx += dashW + gapW;
-      }
-    }
+
+    // Main pill body — 25% shorter: height 10 (was 14)
+    gfx.roundRect(-width / 2, -2, width, 10, 5);
+    gfx.fill({ color: colours.top, alpha: 0.88 });
+
+    // Top highlight strip
+    gfx.roundRect(-width / 2, -2, width, 3, 5);
+    gfx.fill({ color: colours.highlight, alpha: 0.92 });
+
+    // Underside depth strip
+    gfx.roundRect(-width / 2 + 2, 6, width - 4, 4, 3);
+    gfx.fill({ color: colours.side, alpha: 0.88 });
   }
 
   private createPlayer() {
@@ -353,100 +403,115 @@ export class GameCore {
 
     const g = new PIXI.Graphics();
 
-    // ── Ground shadow ellipse ──────────────────────────────────────────────
-    g.ellipse(0, 26, 13, 3.5);
-    g.fill({ color: 0x000000, alpha: 0.16 });
-
     // ── Boots ─────────────────────────────────────────────────────────────
-    g.roundRect(-12, 18, 11, 9, 3);
-    g.fill({ color: 0x0D1A30 });
-    g.roundRect(1, 18, 11, 9, 3);
-    g.fill({ color: 0x0D1A30 });
-    // Boot highlights
-    g.roundRect(-11, 19, 4, 3, 1.5);
-    g.fill({ color: 0x2A3A5A, alpha: 0.7 });
-    g.roundRect(2, 19, 4, 3, 1.5);
-    g.fill({ color: 0x2A3A5A, alpha: 0.7 });
+    g.roundRect(-13, 19, 13, 9, 5);
+    g.fill({ color: 0x131E32 });
+    g.roundRect(0, 19, 13, 9, 5);
+    g.fill({ color: 0x131E32 });
+    g.roundRect(-12, 20, 5, 3, 1.5);
+    g.fill({ color: 0x2E4060, alpha: 0.65 });
+    g.roundRect(1, 20, 5, 3, 1.5);
+    g.fill({ color: 0x2E4060, alpha: 0.65 });
 
     // ── Legs ──────────────────────────────────────────────────────────────
-    g.roundRect(-10, 8, 8, 12, 3);
-    g.fill({ color: 0x1A2744 });
-    g.roundRect(2, 8, 8, 12, 3);
-    g.fill({ color: 0x1A2744 });
+    g.roundRect(-11, 10, 10, 12, 4);
+    g.fill({ color: 0x1C2840 });
+    g.roundRect(1, 10, 10, 12, 4);
+    g.fill({ color: 0x1C2840 });
+    g.roundRect(-10, 11, 4, 6, 2);
+    g.fill({ color: 0x2E4060, alpha: 0.55 });
+    g.roundRect(2, 11, 4, 6, 2);
+    g.fill({ color: 0x2E4060, alpha: 0.55 });
 
-    // ── Body ──────────────────────────────────────────────────────────────
-    g.roundRect(-13, -8, 26, 18, 7);
-    g.fill({ color: 0xF0EBE2 });          // warm off-white vinyl
-    // Body left-side highlight (rim light)
-    g.roundRect(-12, -6, 8, 12, 4);
-    g.fill({ color: 0xFFFFFF, alpha: 0.45 });
-    // Chest panel
-    g.roundRect(-7, -3, 14, 9, 3);
-    g.fill({ color: 0xE0D9CE });
-    // Chest panel inner glow accent
-    g.roundRect(-5, -2, 10, 7, 2);
-    g.fill({ color: 0x00C8F0, alpha: 0.22 });
-    // Body bottom shadow
-    g.roundRect(-12, 6, 24, 4, 3);
-    g.fill({ color: 0x00000000 & 0xD4CCBf, alpha: 0.18 });
+    // ── Hip band ───────────────────────────────────────────────────────────
+    g.roundRect(-12, 6, 24, 7, 3);
+    g.fill({ color: 0x1C2840 });
+    g.roundRect(-10, 7, 20, 2, 1);
+    g.fill({ color: 0x3A5070, alpha: 0.45 });
 
-    // ── Right arm (visible in side profile) ───────────────────────────────
-    g.roundRect(12, -6, 6, 12, 3);
-    g.fill({ color: 0xE0D9CE });
-    g.roundRect(12, 4, 6, 5, 2);
-    g.fill({ color: 0x1A2744 });         // glove
+    // ── Left arm (drawn BEFORE body so body overlaps it — appears behind) ──
+    g.roundRect(-20, -7, 7, 11, 3);
+    g.fill({ color: 0xC8D4E4 });          // slightly darker — it's the "rear" arm
+    g.roundRect(-20, 2, 7, 5, 2);
+    g.fill({ color: 0x161F33 });          // left glove — slightly different shade
+    // Left arm accent dot
+    g.circle(-17, -8, 1.5);
+    g.fill({ color: 0x3AB0D8, alpha: 0.7 });
 
-    // ── Collar / neck ring ─────────────────────────────────────────────────
-    g.roundRect(-9, -10, 18, 5, 2);
-    g.fill({ color: 0x1A2744 });
+    // ── Body / torso ───────────────────────────────────────────────────────
+    g.roundRect(-13, -9, 26, 17, 7);
+    g.fill({ color: 0xEFF4F8 });
+    g.roundRect(-12, -7, 9, 11, 4);
+    g.fill({ color: 0xFFFFFF, alpha: 0.5 });
+    g.roundRect(4, -7, 8, 11, 3);
+    g.fill({ color: 0xC8D4E0, alpha: 0.35 });
+    // Chest power-core emblem
+    g.circle(0, -2, 8);
+    g.fill({ color: 0x2AA8E0 });
+    g.circle(0, -2, 6);
+    g.fill({ color: 0x4CCCFF });
+    g.circle(0, -2, 3);
+    g.fill({ color: 0xB8EEFF });
+    g.circle(0, -2, 9);
+    g.stroke({ color: 0x5CCFFF, width: 1, alpha: 0.35 });
 
-    // ── Helmet ────────────────────────────────────────────────────────────
-    g.roundRect(-13, -30, 26, 22, 10);
-    g.fill({ color: 0x1A2744 });
-    // Helmet top highlight (surface gloss)
-    g.roundRect(-10, -29, 14, 7, 5);
-    g.fill({ color: 0x2E4A7A, alpha: 0.65 });
-    // Helmet chin/lower rim
-    g.roundRect(-13, -11, 26, 3, 1);
-    g.fill({ color: 0x0D1530 });
+    // ── Right arm ──────────────────────────────────────────────────────────
+    g.roundRect(13, -7, 7, 11, 3);
+    g.fill({ color: 0xD8E4F0 });
+    g.roundRect(13, 2, 7, 5, 2);
+    g.fill({ color: 0x1C2840 });
 
-    // ── Visor ─────────────────────────────────────────────────────────────
-    g.roundRect(-9, -26, 18, 13, 5);
-    g.fill({ color: 0x00C8F0 });          // electric cyan
-    // Visor inner layer (depth)
-    g.roundRect(-8, -25, 16, 11, 4);
-    g.fill({ color: 0x40DEFF, alpha: 0.55 });
-    // Eyes — expressive white dots
-    g.circle(-3, -19, 2.8);
-    g.fill({ color: 0xFFFFFF });
-    g.circle(4.5, -19, 2.8);
-    g.fill({ color: 0xFFFFFF });
-    // Pupils
-    g.circle(-2.5, -19, 1.3);
-    g.fill({ color: 0x001840 });
-    g.circle(5, -19, 1.3);
-    g.fill({ color: 0x001840 });
-    // Visor gloss reflection
-    g.roundRect(-7, -25, 7, 4, 2);
-    g.fill({ color: 0xFFFFFF, alpha: 0.35 });
+    // ── Neck ───────────────────────────────────────────────────────────────
+    g.roundRect(-7, -13, 14, 6, 2);
+    g.fill({ color: 0x243050 });
 
-    // ── Antenna ────────────────────────────────────────────────────────────
-    g.roundRect(-2, -34, 4, 6, 2);
-    g.fill({ color: 0x2A3A5A });
-    // Antenna glow orb
-    g.circle(0, -36, 4);
-    g.fill({ color: 0xFFCC44 });         // warm gold
-    g.circle(0, -36, 2);
-    g.fill({ color: 0xFFEEAA });         // bright centre
+    // ── Helmet — large, rounded, deep navy ────────────────────────────────
+    g.roundRect(-15, -38, 30, 27, 13);
+    g.fill({ color: 0x1C2840 });
+    g.roundRect(-13, -37, 20, 10, 8);
+    g.fill({ color: 0x2A3D5E, alpha: 0.65 });
+    g.roundRect(-14, -22, 9, 10, 4);
+    g.fill({ color: 0x243050, alpha: 0.45 });
+    g.roundRect(-15, -14, 30, 4, 1);
+    g.fill({ color: 0x0E1828 });
+
+    // ── Visor — wide, bright cyan ──────────────────────────────────────────
+    g.roundRect(-11, -34, 22, 18, 7);
+    g.fill({ color: 0x4AC4F0 });
+    g.roundRect(-10, -33, 20, 16, 6);
+    g.fill({ color: 0x72D8FF });
+    g.roundRect(-7, -31, 14, 10, 4);
+    g.fill({ color: 0xAAECFF, alpha: 0.55 });
+    g.roundRect(-9, -33, 11, 5, 2.5);
+    g.fill({ color: 0xFFFFFF, alpha: 0.28 });
+
+    // ── Helmet side accent dots ────────────────────────────────────────────
+    g.circle(-15, -24, 3);
+    g.fill({ color: 0x4AC4F0 });
+    g.circle(-15, -24, 1.5);
+    g.fill({ color: 0xAAECFF });
+    g.circle(15, -24, 3);
+    g.fill({ color: 0x4AC4F0 });
+    g.circle(15, -24, 1.5);
+    g.fill({ color: 0xAAECFF });
+    // Lower accent dots
+    g.circle(-12, -12, 2);
+    g.fill({ color: 0x3AB0D8, alpha: 0.85 });
+    g.circle(12, -12, 2);
+    g.fill({ color: 0x3AB0D8, alpha: 0.85 });
 
     this.playerSprite = g;
-    this.worldContainer.addChild(this.playerSprite);
 
-    // Jump indicator pip (above character when airborne)
+    // ── Dynamic cast shadow (added BEFORE player so it renders behind) ─────
+    this.shadowSprite = new PIXI.Graphics();
+    this.shadowSprite.ellipse(0, 0, 16, 5);
+    this.shadowSprite.fill({ color: 0x000000 });
+    this.worldContainer.addChild(this.shadowSprite);   // behind player
+    this.worldContainer.addChild(this.playerSprite);   // in front of shadow
+
     this.jumpIndicator = new PIXI.Graphics();
     this.worldContainer.addChild(this.jumpIndicator);
 
-    // Spawn arrow hint
     this.spawnArrow = new PIXI.Graphics();
     this.spawnArrow.poly([0, -10, 10, 10, -10, 10]);
     this.spawnArrow.fill({ color: 0x60c8ff });
@@ -487,6 +552,7 @@ export class GameCore {
 
       const sprite = new PIXI.Graphics();
       this.drawEnemySprite(sprite);
+      sprite.tint = this.ambientTint;
       this.worldContainer.addChild(sprite);
 
       const speed = 1.8 * d.enemySpeedMultiplier;
@@ -533,57 +599,99 @@ export class GameCore {
     this.exitGraphics = new PIXI.Graphics();
     const g = this.exitGraphics;
 
-    const dW = 44;       // door width
-    const aR = 22;       // arch radius = dW/2
-    const rectH = 52;    // height of rectangular section below arch
-    // Total door height = rectH + aR = 74px, sitting on platform surface (y=0)
+    // Dimensions — device sits with base at y=0 and extends upward
+    const W = 66, H = 102, CR = 16;
 
-    // ── Outer atmospheric glow ──────────────────────────────────────────
-    g.moveTo(-dW / 2 - 10, 2);
-    g.lineTo(-dW / 2 - 10, -rectH);
-    g.arc(0, -rectH, aR + 10, Math.PI, 0, false);
-    g.lineTo(dW / 2 + 10, 2);
-    g.fill({ color: 0x00ff88, alpha: 0.07 });
+    // ── Drop shadow ────────────────────────────────────────────────────
+    g.roundRect(-29, -96, 62, 96, CR);
+    g.fill({ color: 0x000000, alpha: 0.28 });
 
-    // ── Portal interior fill ─────────────────────────────────────────────
-    g.moveTo(-dW / 2, 0);
-    g.lineTo(-dW / 2, -rectH);
-    g.arc(0, -rectH, aR, Math.PI, 0, false);
-    g.lineTo(dW / 2, 0);
-    g.fill({ color: 0x00ff88, alpha: 0.18 });
+    // ── Outer casing body ──────────────────────────────────────────────
+    g.roundRect(-33, -H, W, H, CR);
+    g.fill({ color: 0x1A2540 });
+    // Top-left rim highlight
+    g.roundRect(-33, -H, 10, H, CR);
+    g.fill({ color: 0x2A3A5A, alpha: 0.55 });
+    g.roundRect(-33, -H, W, 10, CR);
+    g.fill({ color: 0x2A3A5A, alpha: 0.45 });
+    // Bottom-right shadow edge
+    g.roundRect(21, -H, 12, H, CR);
+    g.fill({ color: 0x0C1428, alpha: 0.5 });
 
-    // ── Inner glow brighten ──────────────────────────────────────────────
-    g.moveTo(-dW / 2 + 7, -4);
-    g.lineTo(-dW / 2 + 7, -rectH);
-    g.arc(0, -rectH, aR - 7, Math.PI, 0, false);
-    g.lineTo(dW / 2 - 7, -4);
-    g.fill({ color: 0x00ff88, alpha: 0.14 });
+    // ── Inner recessed panel ───────────────────────────────────────────
+    g.roundRect(-27, -96, 54, 90, 10);
+    g.fill({ color: 0x0C1422 });
 
-    // ── Door frame — arch outline ────────────────────────────────────────
-    g.moveTo(-dW / 2, 2);
-    g.lineTo(-dW / 2, -rectH);
-    g.arc(0, -rectH, aR, Math.PI, 0, false);
-    g.lineTo(dW / 2, 2);
-    g.stroke({ color: 0x00ff88, width: 3.5, alpha: 0.95 });
+    // ── Window helper: draws a glass slot at given top-y, given height ─
+    const drawWindow = (topY: number, wH: number) => {
+      const wW = 46, wX = -23;
+      // Outer ring
+      g.roundRect(wX - 2, topY - 2, wW + 4, wH + 4, 9);
+      g.fill({ color: 0x07101C });
+      // Glass base (dark green)
+      g.roundRect(wX, topY, wW, wH, 8);
+      g.fill({ color: 0x0B2E1A });
+      // Mid fill
+      g.roundRect(wX + 2, topY + 2, wW - 4, wH - 4, 6);
+      g.fill({ color: 0x1A6040 });
+      // Upper highlight (glass thickness illusion)
+      g.roundRect(wX + 3, topY + 3, wW - 8, Math.round(wH * 0.42), 5);
+      g.fill({ color: 0x2D8F56, alpha: 0.65 });
+      // Gloss shine top-left
+      g.roundRect(wX + 4, topY + 4, Math.round(wW * 0.40), 7, 3);
+      g.fill({ color: 0xFFFFFF, alpha: 0.13 });
+    };
 
-    // ── Floor threshold sill ────────────────────────────────────────────
-    g.roundRect(-dW / 2 - 4, -2, dW + 8, 4, 2);
-    g.fill({ color: 0x00ff88, alpha: 0.8 });
+    drawWindow(-90, 32);  // top window
+    drawWindow(-52, 28);  // bottom window (slightly shorter for depth illusion)
 
-    // ── Left & right door posts (vertical lines for depth) ──────────────
-    g.rect(-dW / 2 - 3, -rectH, 3, rectH + 2);
-    g.fill({ color: 0x00ff88, alpha: 0.6 });
-    g.rect(dW / 2, -rectH, 3, rectH + 2);
-    g.fill({ color: 0x00ff88, alpha: 0.6 });
+    // ── Centre divider strip ───────────────────────────────────────────
+    g.roundRect(-27, -58, 54, 6, 2);
+    g.fill({ color: 0x0C1422 });
 
-    // ── Upward chevron icon (signals exit direction) ─────────────────────
-    const cy = -rectH * 0.48;
-    g.poly([0, cy - 12, 10, cy + 2, 6, cy + 2, 6, cy + 12, -6, cy + 12, -6, cy + 2, -10, cy + 2]);
-    g.fill({ color: 0x00ff88, alpha: 0.65 });
+    // ── Base indicator panel ───────────────────────────────────────────
+    g.roundRect(-27, -20, 54, 16, 5);
+    g.fill({ color: 0x07101C });
 
     g.position.set(exit.x, exit.y);
     this.worldContainer.addChild(g);
-    console.log(`[GameCore] Exit door placed at x=${exit.x} y=${exit.y}`);
+
+    // ── Lights (separate Graphics so they can blink independently) ─────
+    this.exitLightPositions = [
+      { x: -15, y: -12, blinking: true  },   // far left  — blinks
+      { x:  -6, y: -12, blinking: false },   // inner left — static dim
+      { x:   6, y: -12, blinking: false },   // inner right — static dim
+      { x:  15, y: -12, blinking: true  },   // far right — blinks
+    ];
+    this.exitLightsGraphics = new PIXI.Graphics();
+    this.exitLightsGraphics.position.set(exit.x, exit.y);
+    this.worldContainer.addChild(this.exitLightsGraphics);
+    this.redrawExitLights(); // draw initial state
+
+    console.log(`[GameCore] Exit portal placed at x=${exit.x} y=${exit.y}`);
+  }
+
+  private redrawExitLights() {
+    if (!this.exitLightsGraphics) return;
+    this.exitLightsGraphics.clear();
+    for (const pos of this.exitLightPositions) {
+      if (pos.blinking) {
+        this.exitLightsGraphics.circle(pos.x, pos.y, 3);
+        this.exitLightsGraphics.fill({
+          color:  this.exitLightOn ? 0x00E0A8 : 0x003828,
+          alpha:  this.exitLightOn ? 1.0 : 0.55
+        });
+        // Glow halo when lit
+        if (this.exitLightOn) {
+          this.exitLightsGraphics.circle(pos.x, pos.y, 5.5);
+          this.exitLightsGraphics.fill({ color: 0x00E0A8, alpha: 0.20 });
+        }
+      } else {
+        // Static dim dot
+        this.exitLightsGraphics.circle(pos.x, pos.y, 2);
+        this.exitLightsGraphics.fill({ color: 0x1A3040, alpha: 0.75 });
+      }
+    }
   }
 
   private update(delta: number) {
@@ -646,8 +754,8 @@ export class GameCore {
           if (fp.timer <= 0) {
             fp.gfx.alpha = 1;
             fp.state = "solid";
-            const colours = PLATFORM_THEME_COLOURS[fp.themeKey];
-            this.drawPlatformGfx(fp.gfx, fp.width, fp.height, colours, true);
+            const colours = this.getDynamicPlatformColours(fp.themeKey);
+            this.drawPlatformGfx(fp.gfx, fp.width, fp.height, colours, false);
           }
           break;
         }
@@ -665,6 +773,37 @@ export class GameCore {
 
     Matter.Engine.update(this.engine, dtMs);
     this.playerSprite.position.set(this.player.position.x, this.player.position.y);
+
+    // ── Dynamic cast shadow ───────────────────────────────────────────────────
+    if (this.shadowSprite && this.player) {
+      const px  = this.player.position.x;
+      const pBottomY = this.player.position.y + 25;
+      const allStatic = Matter.Composite.allBodies(this.engine.world).filter(b => b.isStatic);
+
+      // Find the closest static surface directly below the player's feet
+      const surfacesBelow = allStatic
+        .filter(b =>
+          b.bounds.min.y >= pBottomY - 4 &&
+          b.bounds.min.y <= pBottomY + 420 &&
+          b.bounds.max.x > px - 18 &&
+          b.bounds.min.x < px + 18
+        )
+        .sort((a, b) => a.bounds.min.y - b.bounds.min.y);
+
+      if (surfacesBelow.length > 0) {
+        const surfY  = surfacesBelow[0].bounds.min.y;
+        const dist   = surfY - pBottomY;
+        const maxDist = 380;
+        const t = Math.max(0, 1 - dist / maxDist);   // 1 = on ground, 0 = far away
+
+        this.shadowSprite.visible = true;
+        this.shadowSprite.position.set(px, surfY);
+        this.shadowSprite.scale.set(t * 0.85 + 0.15, 1.0);
+        this.shadowSprite.alpha = t * 0.38;
+      } else {
+        this.shadowSprite.visible = false;
+      }
+    }
 
     // ── Squash & stretch ─────────────────────────────────────────────────────
     const justLanded = this.isGrounded && !this.prevGroundedForSquash;
@@ -707,11 +846,19 @@ export class GameCore {
       if (this.playerSprite) {
         this.playerSprite.tint = PIXI.Color.shared.setValue([1, 1, Math.min(1, 0.6 + t * 0.4)]).toNumber();
       }
-    } else if (this.playerSprite && this.playerSprite.tint !== 0xffffff) {
-      this.playerSprite.tint = 0xffffff;
+    } else if (this.playerSprite && this.playerSprite.tint !== this.ambientTint) {
+      this.playerSprite.tint = this.ambientTint;
     }
 
-    if (this.exitGraphics) this.exitGraphics.alpha = 0.8 + Math.sin(Date.now() / 400) * 0.2;
+    // ── Exit light blink ────────────────────────────────────────────────
+    this.exitLightTimer += dtMs;
+    if (this.exitLightTimer >= 520) {
+      this.exitLightTimer = 0;
+      this.exitLightOn = !this.exitLightOn;
+      this.redrawExitLights();
+    }
+
+    if (this.exitLightsGraphics) this.exitLightsGraphics.alpha = 1;
 
     const allStaticBodies = Matter.Composite.allBodies(this.engine.world).filter(b => b.isStatic);
     const feetY = this.player.position.y + 25;
@@ -741,7 +888,7 @@ export class GameCore {
 
     this.isWallSliding = (onLeftWall || onRightWall) && !this.isGrounded && this.player.velocity.y > 0;
     this.wallDirection = onLeftWall ? -1 : (onRightWall ? 1 : 0);
-    if (this.isWallSliding && this.player.velocity.y > 1.8) Matter.Body.setVelocity(this.player, { x: this.player.velocity.x, y: 1.8 });
+    if (this.isWallSliding && this.player.velocity.y > 2.2) Matter.Body.setVelocity(this.player, { x: this.player.velocity.x, y: 2.2 });
 
     if (this.isGrounded) this.coyoteTimer = 0; else this.coyoteTimer += dtMs;
     this.jumpBufferTimer -= dtMs;
@@ -751,12 +898,12 @@ export class GameCore {
     
     if (jumpJustPressed) {
       if (this.isGrounded || this.coyoteTimer < 140) {
-        Matter.Body.setVelocity(this.player, { x: this.player.velocity.x, y: -8.5 });
+        Matter.Body.setVelocity(this.player, { x: this.player.velocity.x, y: -11 });
         this.coyoteTimer = 999;
         this.jumpPressed = true;
         this.jumpBufferTimer = 0;
       } else if (this.airJumpsUsed < this.MAX_AIR_JUMPS && !this.isWallSliding) {
-        Matter.Body.setVelocity(this.player, { x: this.player.velocity.x, y: -7 });
+        Matter.Body.setVelocity(this.player, { x: this.player.velocity.x, y: -9 });
         this.airJumpsUsed++;
         this.jumpPressed = true;
         this.doubleJumpFlash = 180;
@@ -803,7 +950,7 @@ export class GameCore {
     }
 
     const exitPos = this.levelData.exit || { x: 1200, y: 100 };
-    if (Math.hypot(this.player.position.x - exitPos.x, this.player.position.y - exitPos.y) < 40) {
+    if (Math.hypot(this.player.position.x - exitPos.x, this.player.position.y - exitPos.y) < 50) {
       this.onWin(this.getElapsedSeconds());
     }
 
@@ -860,13 +1007,13 @@ export class GameCore {
 
   private jump() {
     if (!this.player) return;
-    Matter.Body.setVelocity(this.player, { x: this.player.velocity.x, y: -8.5 });
+    Matter.Body.setVelocity(this.player, { x: this.player.velocity.x, y: -11 });
     this.isGrounded = false;
   }
 
   private wallJump() {
     if (!this.player) return;
-    Matter.Body.setVelocity(this.player, { x: -this.wallDirection * 9, y: -8 });
+    Matter.Body.setVelocity(this.player, { x: -this.wallDirection * 9, y: -10 });
     this.lastWallJumpTime = Date.now();
     this.airJumpsUsed = 0;
   }
@@ -882,12 +1029,16 @@ export class GameCore {
 
   public destroy() {
     this.app.destroy(true, { children: true });
-    this.engine.world.bodies.forEach(b => Matter.Composite.remove(this.engine.world, b));
+    Matter.Engine.clear(this.engine);
     this.enemies.forEach(e => Matter.Composite.remove(this.engine.world, e.body));
     this.enemies = [];
     this.fragilePlatforms.clear();
     window.removeEventListener("keydown", this.handleKeyDown);
     window.removeEventListener("keyup",   this.handleKeyUp);
     window.removeEventListener("resize",  this.handleResize);
+  }
+
+  public setKey(code: string, value: boolean): void {
+    this.keys[code] = value;
   }
 }

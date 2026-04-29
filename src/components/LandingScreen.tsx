@@ -10,9 +10,19 @@ import {
 
 interface LandingScreenProps {
   onUpload: (file: File) => void;
+  showDebugLabels: boolean;
+  onToggleDebug: () => void;
+  showMobileControls: boolean;
+  onToggleMobile: () => void;
 }
 
-export default function LandingScreen({ onUpload }: LandingScreenProps) {
+export default function LandingScreen({ 
+  onUpload, 
+  showDebugLabels, 
+  onToggleDebug, 
+  showMobileControls, 
+  onToggleMobile 
+}: LandingScreenProps) {
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -101,10 +111,32 @@ export default function LandingScreen({ onUpload }: LandingScreenProps) {
           )}
         </AnimatePresence>
 
-        <p className="text-white/20 text-xs font-bold uppercase tracking-widest pt-4">
+        <p className="text-blue-500 text-xs font-bold uppercase tracking-widest pt-4">
           Recommended: Landscapes, Interiors, or Objects with flat surfaces
         </p>
       </motion.div>
+
+      {/* Settings toggles — subtle bottom-right */}
+      <div className="fixed bottom-4 right-5 z-50 flex flex-col items-end gap-2">
+        <button
+          onClick={onToggleMobile}
+          className="flex items-center gap-1.5 text-white/25 hover:text-white/55 transition-colors"
+        >
+          <div className={`w-2 h-2 rounded-full border transition-colors ${
+            showMobileControls ? "bg-blue-500 border-blue-400" : "bg-transparent border-white/30"
+          }`} />
+          <span className="text-[10px] font-mono uppercase tracking-widest">touch controls</span>
+        </button>
+        <button
+          onClick={onToggleDebug}
+          className="flex items-center gap-1.5 text-white/20 hover:text-white/45 transition-colors"
+        >
+          <div className={`w-2 h-2 rounded-full border transition-colors ${
+            showDebugLabels ? "bg-blue-500 border-blue-400" : "bg-transparent border-white/30"
+          }`} />
+          <span className="text-[10px] font-mono uppercase tracking-widest">debug</span>
+        </button>
+      </div>
     </div>
   );
 }
