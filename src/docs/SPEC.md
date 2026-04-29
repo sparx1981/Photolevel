@@ -1,6 +1,6 @@
 # PhotoLevel Product Specification
 
-> **Last Updated:** 2026-04-29 | **Changed:** Integrated procedural audio system, pixel-sampled platform coloring, and scaled exit door. Added audio HUD and toggles.
+> **Last Updated:** 2026-04-29 | **Changed:** Implemented Convolver-based indoor reverb and 12-channel procedural voice synthesis for busy interiors. Fixed audio manager syntax errors.
 
 ## Architecture Overview
 PhotoLevel is a browser-based 2D platformer where levels are dynamically designed by Gemini AI by identifying real-world surfaces in user-uploaded images and transforming them into playable platforms. Levels feature progressive difficulty scaling on replay.
@@ -33,7 +33,10 @@ PhotoLevel is a browser-based 2D platformer where levels are dynamically designe
 - **Dynamic Coloring:** Platforms sample actual image pixels at their position for seamless integration.
 
 ### 3. Audio System
-- **Procedural Synthesis:** Real-time generation of wind, birds, waves, and industrial hums based on `sceneType`.
+- **Procedural Synthesis:** Real-time generation of multi-layered environments based on `sceneType`.
+  - `urban_outdoor`: Traffic rumbles, car pass-bys, crowd murmur.
+  - `interior_busy`: Convolver-based room reverb, 12-channel procedural voice synthesis (babble), room tone, and crockery clinks.
+  - `interior_calm`: HVAC/room tone and gentle hums.
 - **Dynamic SFX:** Footsteps and landing impacts with intensity scaling based on fall height.
 
 ## Controls & Shortcuts

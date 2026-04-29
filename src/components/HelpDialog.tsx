@@ -14,11 +14,14 @@ export default function HelpDialog({ isOpen, onClose }: HelpDialogProps) {
     {
       date: "2026-04-29",
       changes: [
-        "Added procedural audio system with scene-aware ambient environments.",
-        "Implemented synthesized SFX for footsteps and landing impacts.",
-        "Refined platform generation: desaturated colors for material realism and stricter width limits.",
-        "Optimized mobile experience with fullscreen support and enhanced viewport meta tags.",
-        "Added audio mute toggles to HUD and Landing Screen."
+        "Implemented high-fidelity Convolver-based reverb for realistic indoor acoustics.",
+        "Integrated 12-channel procedural voice synthesis for complex crowd babble in busy interiors.",
+        "Refined Urban Soundscape: Multi-layered traffic rumbles and Doppler-style car pass-bys.",
+        "Implemented pixel-sampled platform coloring for seamless material integration with photos.",
+        "Added Audio HUD with real-time scene labeling and per-layer mute toggles.",
+        "Optimized viewport: Scaled exit door (70%) and adjusted platform transparency (62-72%) for clarity.",
+        "Enhanced physics: matter.js v0.20 rotated slab collisions and material desaturation (45%).",
+        "Fixed critical syntax errors and method duplication in the procedural audio engine."
       ]
     },
     {
