@@ -1,6 +1,6 @@
 # PhotoLevel Product Specification
 
-> **Last Updated:** 2026-04-29 | **Changed:** Implemented portal device redesign, ambient tinting system, mobile touch controls, and persistent debug/control toggles. Removed two-pass refinement remnants for a leaner single-pass pipeline.
+> **Last Updated:** 2026-04-29 | **Changed:** Implemented virtual analogue joystick with velocity-targeting for precise mobile control. Removed air jump flash effect.
 
 ## Architecture Overview
 PhotoLevel is a browser-based 2D platformer where levels are dynamically designed by Gemini AI by identifying real-world surfaces in user-uploaded images and transforming them into playable platforms. Levels feature progressive difficulty scaling on replay.
@@ -43,12 +43,11 @@ Replaying a photo increments the difficulty level, applying the following modifi
 ## Controls & Shortcuts
 | Action | Key / Control |
 | :--- | :--- |
-| Move | WASD / Arrows / Mobile Left-Right Buttons |
-| Jump | Space / W / Up / Mobile Jump Button |
+| Move | WASD / Arrows / Virtual Analogue Joystick (Touch) |
+| Jump | Space / W / Up / Jump Button (Touch) |
 | Home | Return to Menu |
 | Help | Help & Resources |
 | Settings | Debug & Touch Control Toggles (Landing Screen) |
 
 ## Implementation Details: Air Jump Feedback
-- **Flash Effect:** When the player performs an air jump, a blue flash effect is applied to the sprite. The sprite's tint is restored to the scene's `ambientTint` dynamically after the flash fades, ensuring the lighting remains consistent.
 - **Indicator:** A persistent blue pip above the player's head signals if an air jump is currently available.

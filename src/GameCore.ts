@@ -35,6 +35,7 @@ export class GameCore {
   private shadowSprite: PIXI.Graphics | null = null;
   private ambientTint = 0xffffff;
   private showDebugLabels: boolean;
+  private analogueX = 0;
 
   private exitLightsGraphics: PIXI.Graphics | null = null;
   private exitLightPositions: Array<{ x: number; y: number; blinking: boolean }> = [];
@@ -840,13 +841,8 @@ export class GameCore {
       }
     }
 
-    if (this.doubleJumpFlash > 0) {
-      this.doubleJumpFlash -= dtMs;
-      const t = this.doubleJumpFlash / 180;
-      if (this.playerSprite) {
-        this.playerSprite.tint = PIXI.Color.shared.setValue([1, 1, Math.min(1, 0.6 + t * 0.4)]).toNumber();
-      }
-    } else if (this.playerSprite && this.playerSprite.tint !== this.ambientTint) {
+    // Always maintain ambient tint — no flash
+    if (this.playerSprite && this.playerSprite.tint !== this.ambientTint) {
       this.playerSprite.tint = this.ambientTint;
     }
 
@@ -880,10 +876,28 @@ export class GameCore {
 
     if (Date.now() - this.lastWallJumpTime > 150) {
       const moveForce = 0.007 * delta;
-      if (this.keys["ArrowLeft"] || this.keys["KeyA"]) Matter.Body.applyForce(this.player, this.player.position, { x: -moveForce, y: 0 });
-      if (this.keys["ArrowRight"] || this.keys["KeyD"]) Matter.Body.applyForce(this.player, this.player.position, { x: moveForce, y: 0 });
-      const maxVelX = 4.5;
-      if (Math.abs(this.player.velocity.x) > maxVelX) Matter.Body.setVelocity(this.player, { x: Math.sign(this.player.velocity.x) * maxVelX, y: this.player.velocity.y });
+      const maxVelX   = 4.5;
+
+      if (Math.abs(this.analogueX) > 0.06) {
+        // Analogue stick: velocity-targeting for immediate, proportional response
+        const targetVx = this.analogueX * maxVelX;
+        const curVx    = this.player.velocity.x;
+        Matter.Body.setVelocity(this.player, {
+          x: curVx + (targetVx - curVx) * 0.30,
+          y: this.player.velocity.y
+        });
+      } else {
+        // Keyboard: force-based (unchanged)
+        if (this.keys["ArrowLeft"] || this.keys["KeyA"]) Matter.Body.applyForce(this.player, this.player.position, { x: -moveForce, y: 0 });
+        if (this.keys["ArrowRight"] || this.keys["KeyD"]) Matter.Body.applyForce(this.player, this.player.position, { x: moveForce, y: 0 });
+      }
+
+      if (Math.abs(this.player.velocity.x) > maxVelX) {
+        Matter.Body.setVelocity(this.player, {
+          x: Math.sign(this.player.velocity.x) * maxVelX,
+          y: this.player.velocity.y
+        });
+      }
     }
 
     this.isWallSliding = (onLeftWall || onRightWall) && !this.isGrounded && this.player.velocity.y > 0;
@@ -906,7 +920,6 @@ export class GameCore {
         Matter.Body.setVelocity(this.player, { x: this.player.velocity.x, y: -9 });
         this.airJumpsUsed++;
         this.jumpPressed = true;
-        this.doubleJumpFlash = 180;
       } else if (this.isWallSliding) {
         this.wallJump();
         this.jumpPressed = true;
@@ -1040,5 +1053,9 @@ export class GameCore {
 
   public setKey(code: string, value: boolean): void {
     this.keys[code] = value;
+  }
+
+  public setAnalogueX(value: number): void {
+    this.analogueX = Math.max(-1, Math.min(1, value));
   }
 }

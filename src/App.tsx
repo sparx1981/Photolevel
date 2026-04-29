@@ -13,6 +13,80 @@ import { Home, Trophy, Skull, HelpCircle, RotateCcw, Flame } from "lucide-react"
 
 type AppState = "landing" | "loading" | "playing" | "won";
 
+// ── Virtual Analogue Joystick ──────────────────────────────────────────────
+function VirtualJoystick({ onMove }: { onMove: (x: number) => void }) {
+  const baseRef  = useRef<HTMLDivElement>(null);
+  const knobRef  = useRef<HTMLDivElement>(null);
+  const dragging = useRef(false);
+  const KNOB_TRAVEL = 30; // max px the knob moves from centre
+
+  const computeFromEvent = (e: React.PointerEvent) => {
+    if (!baseRef.current || !knobRef.current) return;
+    const rect = baseRef.current.getBoundingClientRect();
+    const dx   = e.clientX - (rect.left + rect.width  / 2);
+    const dy   = e.clientY - (rect.top  + rect.height / 2);
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const clamp = Math.min(dist, KNOB_TRAVEL);
+    const angle = Math.atan2(dy, dx);
+    const kx = clamp * Math.cos(angle);
+    const ky = clamp * Math.sin(angle);
+    // Update knob position directly via style — no re-render, no lag
+    knobRef.current.style.transform = `translate(calc(-50% + ${kx}px), calc(-50% + ${ky}px))`;
+    onMove(kx / KNOB_TRAVEL);  // normalised -1..+1
+  };
+
+  const onDown = (e: React.PointerEvent) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragging.current = true;
+    computeFromEvent(e);
+  };
+
+  const onMove_ = (e: React.PointerEvent) => {
+    if (dragging.current) computeFromEvent(e);
+  };
+
+  const onRelease = () => {
+    dragging.current = false;
+    if (knobRef.current)
+      knobRef.current.style.transform = 'translate(-50%, -50%)';
+    onMove(0);
+  };
+
+  return (
+    <div
+      ref={baseRef}
+      onPointerDown={onDown}
+      onPointerMove={onMove_}
+      onPointerUp={onRelease}
+      onPointerCancel={onRelease}
+      className="w-24 h-24 rounded-full border border-white/20 backdrop-blur-sm relative"
+      style={{
+        background: 'radial-gradient(circle, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.05) 100%)',
+        touchAction: 'none',
+      }}
+    >
+      {/* Crosshair guides */}
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-25">
+        <div className="w-full h-px bg-white/40" />
+      </div>
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-25">
+        <div className="h-full w-px bg-white/40" />
+      </div>
+      {/* Knob */}
+      <div
+        ref={knobRef}
+        className="w-10 h-10 rounded-full absolute left-1/2 top-1/2 pointer-events-none"
+        style={{
+          transform: 'translate(-50%, -50%)',
+          background: 'radial-gradient(circle at 35% 35%, rgba(255,255,255,0.55), rgba(255,255,255,0.20))',
+          border: '1.5px solid rgba(255,255,255,0.50)',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+        }}
+      />
+    </div>
+  );
+}
+
 // Standard Game View Component
 function GameView({ levelData, imagePreview, onWin, onDeath, onBack, deathCount, difficulty, showDebugLabels, showMobileControls }: { 
   levelData: LevelData; 
@@ -57,41 +131,29 @@ function GameView({ levelData, imagePreview, onWin, onDeath, onBack, deathCount,
       <div 
         ref={containerRef} 
         className="flex-1 bg-[#050505] relative w-full h-full" 
+        style={{ touchAction: 'none' }}
       />
 
       {showMobileControls && (
-        <div className="absolute bottom-0 left-0 right-0 z-30 flex justify-between items-end px-5 pb-6 pointer-events-none select-none">
-          {/* Left / Right */}
-          <div className="flex gap-3 pointer-events-auto">
-            <button
-              onPointerDown={() => gameCoreRef.current?.setKey('ArrowLeft', true)}
-              onPointerUp={() => gameCoreRef.current?.setKey('ArrowLeft', false)}
-              onPointerLeave={() => gameCoreRef.current?.setKey('ArrowLeft', false)}
-              onPointerCancel={() => gameCoreRef.current?.setKey('ArrowLeft', false)}
-              className="w-16 h-16 rounded-full bg-white/10 border border-white/20 backdrop-blur-sm
-                        flex items-center justify-center text-white/80 text-2xl
-                        active:bg-white/25 active:scale-95 transition-all"
-            >◀</button>
-            <button
-              onPointerDown={() => gameCoreRef.current?.setKey('ArrowRight', true)}
-              onPointerUp={() => gameCoreRef.current?.setKey('ArrowRight', false)}
-              onPointerLeave={() => gameCoreRef.current?.setKey('ArrowRight', false)}
-              onPointerCancel={() => gameCoreRef.current?.setKey('ArrowRight', false)}
-              className="w-16 h-16 rounded-full bg-white/10 border border-white/20 backdrop-blur-sm
-                        flex items-center justify-center text-white/80 text-2xl
-                        active:bg-white/25 active:scale-95 transition-all"
-            >▶</button>
+        <div className="absolute bottom-0 left-0 right-0 z-30 flex justify-between items-end px-5 pb-8 pointer-events-none select-none">
+          {/* Analogue joystick — left side */}
+          <div className="pointer-events-auto">
+            <VirtualJoystick onMove={(x) => gameCoreRef.current?.setAnalogueX(x)} />
           </div>
-          {/* Jump */}
+          {/* Jump button — right side */}
           <div className="pointer-events-auto">
             <button
               onPointerDown={() => gameCoreRef.current?.setKey('Space', true)}
               onPointerUp={() => gameCoreRef.current?.setKey('Space', false)}
               onPointerLeave={() => gameCoreRef.current?.setKey('Space', false)}
               onPointerCancel={() => gameCoreRef.current?.setKey('Space', false)}
-              className="w-20 h-20 rounded-full bg-blue-500/15 border border-blue-400/30 backdrop-blur-sm
+              className="w-20 h-20 rounded-full border border-blue-400/30 backdrop-blur-sm
                         flex items-center justify-center text-blue-300 text-xs font-bold uppercase
-                        tracking-widest active:bg-blue-500/35 active:scale-95 transition-all"
+                        tracking-widest active:scale-95 transition-all"
+              style={{
+                background: 'radial-gradient(circle, rgba(59,130,246,0.20) 0%, rgba(59,130,246,0.08) 100%)',
+                touchAction: 'none',
+              }}
             >Jump</button>
           </div>
         </div>

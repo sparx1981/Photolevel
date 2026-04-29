@@ -14,6 +14,15 @@ export default function HelpDialog({ isOpen, onClose }: HelpDialogProps) {
     {
       date: "2026-04-29",
       changes: [
+        "Added virtual analogue joystick for smoother mobile traversal.",
+        "Implemented analogue velocity-targeting for immediate movement feedback.",
+        "Removed double-jump flash effect to maintain visual immersion.",
+        "Added touch-action: none to game viewport to prevent browser scroll interference."
+      ]
+    },
+    {
+      date: "2026-04-29",
+      changes: [
         "Major Release: 'Be Inspired' mode. Uses real-photo crops as game platforms.",
         "Implemented multi-layer parallax scrolling system for deep environment feel.",
         "Added procedural 3D lighting and shadow effects to photo-extracted assets.",
