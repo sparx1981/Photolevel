@@ -1,6 +1,6 @@
 # PhotoLevel Product Specification
 
-> **Last Updated:** 2026-04-29 | **Changed:** Implemented Convolver-based indoor reverb and 12-channel procedural voice synthesis for busy interiors. Fixed audio manager syntax errors.
+> **Last Updated:** 2026-04-30 | **Changed:** Replaced procedural Graphics characters with a high-performance Canvas-cropped sprite animation system for player and enemies.
 
 ## Architecture Overview
 PhotoLevel is a browser-based 2D platformer where levels are dynamically designed by Gemini AI by identifying real-world surfaces in user-uploaded images and transforming them into playable platforms. Levels feature progressive difficulty scaling on replay.
@@ -28,6 +28,10 @@ PhotoLevel is a browser-based 2D platformer where levels are dynamically designe
 
 ### 2. Physics & Gameplay
 - **Player Controller:** Precision movement with analogue velocity-targeting (touch) and force-based movement (keyboard).
+- **Sprite Animation:** Multi-state character system (Idle, Walk, Jump Up, Jump Peak) using 12-frame 1152x3706 sprite sheets.
+  - **Dynamic Cropping:** Individual frames are extracted via hidden Canvas at runtime.
+  - **Squash & Stretch:** Procedural scaling (1.0 base = 54/741) applied to sprite textures for physics impact feedback.
+- **Patrolling Enemies:** Context-aware animations (walk_l/r) matching movement direction.
 - **Difficulty Scaling:** Incremental complexity: Fragile platforms, Patrolling enemies, Narrower surfaces.
 - **Environmental Feedback:** Ambient tinting on sprites to match scene lighting.
 - **Dynamic Coloring:** Platforms sample actual image pixels at their position for seamless integration.

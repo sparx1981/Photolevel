@@ -8,10 +8,23 @@ export class GameCore {
   private engine: Matter.Engine;
   private player: Matter.Body | null = null;
   private worldContainer: PIXI.Container;
-  private playerSprite: PIXI.Graphics | null = null;
+  private playerSprite: PIXI.Sprite | null = null;
   private spawnArrow: PIXI.Graphics | null = null;
   private exitGraphics: PIXI.Graphics | null = null;
   private jumpIndicator: PIXI.Graphics | null = null;
+
+  // Player animation frames — keyed by state
+  private playerFrames: Record<string, PIXI.Texture[]> = {};
+  private playerAnimState = 'idle_r';
+  private playerAnimTick  = 0;
+  private playerAnimIndex = 0;
+  private readonly PLAYER_FRAME_MS = 160;
+
+  // Enemy animation frames (shared across all enemy instances)
+  private enemyFrames: Record<string, PIXI.Texture[]> = {};
+
+  private playerSheetDataUrl = '';
+  private enemySheetDataUrl  = '';
   private levelData: LevelData;
   private imageBase64: string;
   private keys: Record<string, boolean> = {};
@@ -76,12 +89,14 @@ export class GameCore {
   // Enemy tracking
   private enemies: Array<{
     body:       Matter.Body;
-    sprite:     PIXI.Graphics;
+    sprite:     PIXI.Sprite;
     direction:  number;       // 1 = right, -1 = left
     minX:       number;
     maxX:       number;
     speed:      number;
     platformY:  number;
+    animTick:   number;
+    animIndex:  number;
   }> = [];
 
   constructor(
@@ -158,7 +173,23 @@ export class GameCore {
       }
 
       // ── 4. Build all game content ──────────────────────────────────────────
-      this.createPlayer();
+      // Load sprite sheets as data URLs
+      const loadSheet = (path: string): Promise<string> =>
+        fetch(path)
+          .then(r => r.blob())
+          .then(blob => new Promise<string>((res, rej) => {
+            const fr = new FileReader();
+            fr.onload = () => res(fr.result as string);
+            fr.onerror = rej;
+            fr.readAsDataURL(blob);
+          }));
+
+      [this.playerSheetDataUrl, this.enemySheetDataUrl] = await Promise.all([
+        loadSheet('/sprites/player.png'),
+        loadSheet('/sprites/enemy.png'),
+      ]);
+
+      await this.createPlayer();
 
       // ── Apply scene ambient lighting tint to player ──────────────────────────
       const primHex = (this.levelData.theme?.primaryColour ?? "#ffffff").replace('#', '');
@@ -462,121 +493,64 @@ export class GameCore {
     gfx.fill({ color: colours.side, alpha: 0.68 });
   }
 
-  private createPlayer() {
+  private async createPlayer() {
     const spawn = this.levelData.spawn || { x: 100, y: 100 };
     this.player = Matter.Bodies.rectangle(spawn.x, spawn.y, 30, 50, {
       friction: 0.02, frictionAir: 0.02, restitution: 0,
-      inertia: Infinity, label: "player"
+      inertia: Infinity, label: 'player'
     });
     Matter.Composite.add(this.engine.world, [this.player]);
 
-    const g = new PIXI.Graphics();
+    const SH = 741; // section height
+    const sheet = this.playerSheetDataUrl;
 
-    // ── Boots ─────────────────────────────────────────────────────────────
-    g.roundRect(-13, 19, 13, 9, 5);
-    g.fill({ color: 0x131E32 });
-    g.roundRect(0, 19, 13, 9, 5);
-    g.fill({ color: 0x131E32 });
-    g.roundRect(-12, 20, 5, 3, 1.5);
-    g.fill({ color: 0x2E4060, alpha: 0.65 });
-    g.roundRect(1, 20, 5, 3, 1.5);
-    g.fill({ color: 0x2E4060, alpha: 0.65 });
+    const [idleL, idleR,
+      wL1, wL2, wL3,
+      jLup, jLpk,
+      wR1, wR2, wR3,
+      jRup, jRpk
+    ] = await Promise.all([
+      this.cropFrameFromSheet(sheet,   0,    0, 576, SH),
+      this.cropFrameFromSheet(sheet, 576,    0, 576, SH),
+      this.cropFrameFromSheet(sheet,   0,  741, 384, SH),
+      this.cropFrameFromSheet(sheet, 384,  741, 384, SH),
+      this.cropFrameFromSheet(sheet, 768,  741, 384, SH),
+      this.cropFrameFromSheet(sheet,   0, 1482, 576, SH),
+      this.cropFrameFromSheet(sheet, 576, 1482, 576, SH),
+      this.cropFrameFromSheet(sheet,   0, 2223, 384, SH),
+      this.cropFrameFromSheet(sheet, 384, 2223, 384, SH),
+      this.cropFrameFromSheet(sheet, 768, 2223, 384, SH),
+      this.cropFrameFromSheet(sheet,   0, 2964, 576, SH),
+      this.cropFrameFromSheet(sheet, 576, 2964, 576, SH),
+    ]);
 
-    // ── Legs ──────────────────────────────────────────────────────────────
-    g.roundRect(-11, 10, 10, 12, 4);
-    g.fill({ color: 0x1C2840 });
-    g.roundRect(1, 10, 10, 12, 4);
-    g.fill({ color: 0x1C2840 });
-    g.roundRect(-10, 11, 4, 6, 2);
-    g.fill({ color: 0x2E4060, alpha: 0.55 });
-    g.roundRect(2, 11, 4, 6, 2);
-    g.fill({ color: 0x2E4060, alpha: 0.55 });
+    this.playerFrames = {
+      idle_r:   [idleR],
+      idle_l:   [idleL],
+      walk_r:   [wR1, wR2, wR3],
+      walk_l:   [wL1, wL2, wL3],
+      jump_r_up:   [jRup],
+      jump_r_peak: [jRpk],
+      jump_l_up:   [jLup],
+      jump_l_peak: [jLpk],
+    };
 
-    // ── Hip band ───────────────────────────────────────────────────────────
-    g.roundRect(-12, 6, 24, 7, 3);
-    g.fill({ color: 0x1C2840 });
-    g.roundRect(-10, 7, 20, 2, 1);
-    g.fill({ color: 0x3A5070, alpha: 0.45 });
+    // Create sprite from idle_r as default frame
+    this.playerSprite = new PIXI.Sprite(this.playerFrames.idle_r[0]);
+    // Anchor at horizontal centre, feet at bottom
+    this.playerSprite.anchor.set(0.5, 1.0);
+    // Scale to match physics body — body is 30×50, sprite is 576×741
+    // We want the character height (~85% of frame) to be ~50px
+    const targetH = 54;
+    this.playerSprite.scale.set(targetH / SH);
+    this.playerSprite.tint = this.ambientTint;
 
-    // ── Left arm (drawn BEFORE body so body overlaps it — appears behind) ──
-    g.roundRect(-20, -7, 7, 11, 3);
-    g.fill({ color: 0xC8D4E4 });          // slightly darker — it's the "rear" arm
-    g.roundRect(-20, 2, 7, 5, 2);
-    g.fill({ color: 0x161F33 });          // left glove — slightly different shade
-    // Left arm accent dot
-    g.circle(-17, -8, 1.5);
-    g.fill({ color: 0x3AB0D8, alpha: 0.7 });
-
-    // ── Body / torso ───────────────────────────────────────────────────────
-    g.roundRect(-13, -9, 26, 17, 7);
-    g.fill({ color: 0xEFF4F8 });
-    g.roundRect(-12, -7, 9, 11, 4);
-    g.fill({ color: 0xFFFFFF, alpha: 0.5 });
-    g.roundRect(4, -7, 8, 11, 3);
-    g.fill({ color: 0xC8D4E0, alpha: 0.35 });
-    // Chest power-core emblem
-    g.circle(0, -2, 8);
-    g.fill({ color: 0x2AA8E0 });
-    g.circle(0, -2, 6);
-    g.fill({ color: 0x4CCCFF });
-    g.circle(0, -2, 3);
-    g.fill({ color: 0xB8EEFF });
-    g.circle(0, -2, 9);
-    g.stroke({ color: 0x5CCFFF, width: 1, alpha: 0.35 });
-
-    // ── Right arm ──────────────────────────────────────────────────────────
-    g.roundRect(13, -7, 7, 11, 3);
-    g.fill({ color: 0xD8E4F0 });
-    g.roundRect(13, 2, 7, 5, 2);
-    g.fill({ color: 0x1C2840 });
-
-    // ── Neck ───────────────────────────────────────────────────────────────
-    g.roundRect(-7, -13, 14, 6, 2);
-    g.fill({ color: 0x243050 });
-
-    // ── Helmet — large, rounded, deep navy ────────────────────────────────
-    g.roundRect(-15, -38, 30, 27, 13);
-    g.fill({ color: 0x1C2840 });
-    g.roundRect(-13, -37, 20, 10, 8);
-    g.fill({ color: 0x2A3D5E, alpha: 0.65 });
-    g.roundRect(-14, -22, 9, 10, 4);
-    g.fill({ color: 0x243050, alpha: 0.45 });
-    g.roundRect(-15, -14, 30, 4, 1);
-    g.fill({ color: 0x0E1828 });
-
-    // ── Visor — wide, bright cyan ──────────────────────────────────────────
-    g.roundRect(-11, -34, 22, 18, 7);
-    g.fill({ color: 0x4AC4F0 });
-    g.roundRect(-10, -33, 20, 16, 6);
-    g.fill({ color: 0x72D8FF });
-    g.roundRect(-7, -31, 14, 10, 4);
-    g.fill({ color: 0xAAECFF, alpha: 0.55 });
-    g.roundRect(-9, -33, 11, 5, 2.5);
-    g.fill({ color: 0xFFFFFF, alpha: 0.28 });
-
-    // ── Helmet side accent dots ────────────────────────────────────────────
-    g.circle(-15, -24, 3);
-    g.fill({ color: 0x4AC4F0 });
-    g.circle(-15, -24, 1.5);
-    g.fill({ color: 0xAAECFF });
-    g.circle(15, -24, 3);
-    g.fill({ color: 0x4AC4F0 });
-    g.circle(15, -24, 1.5);
-    g.fill({ color: 0xAAECFF });
-    // Lower accent dots
-    g.circle(-12, -12, 2);
-    g.fill({ color: 0x3AB0D8, alpha: 0.85 });
-    g.circle(12, -12, 2);
-    g.fill({ color: 0x3AB0D8, alpha: 0.85 });
-
-    this.playerSprite = g;
-
-    // ── Dynamic cast shadow (added BEFORE player so it renders behind) ─────
+    // Shadow
     this.shadowSprite = new PIXI.Graphics();
     this.shadowSprite.ellipse(0, 0, 16, 5);
     this.shadowSprite.fill({ color: 0x000000 });
-    this.worldContainer.addChild(this.shadowSprite);   // behind player
-    this.worldContainer.addChild(this.playerSprite);   // in front of shadow
+    this.worldContainer.addChild(this.shadowSprite);
+    this.worldContainer.addChild(this.playerSprite);
 
     this.jumpIndicator = new PIXI.Graphics();
     this.worldContainer.addChild(this.jumpIndicator);
@@ -590,9 +564,31 @@ export class GameCore {
     console.log(`[GameCore] Player spawned at x=${spawn.x} y=${spawn.y}`);
   }
 
-  private spawnEnemies() {
+  private async spawnEnemies() {
     const d = this.difficulty;
     if (d.enemyCount === 0) return;
+
+    // Load enemy frames (only once — shared by all enemies)
+    if (Object.keys(this.enemyFrames).length === 0) {
+      const SH = 741;
+      const sheet = this.enemySheetDataUrl;
+      const [idleL, idleR, wL1, wL2, wL3, wR1, wR2, wR3] = await Promise.all([
+        this.cropFrameFromSheet(sheet,   0,    0, 576, SH),
+        this.cropFrameFromSheet(sheet, 576,    0, 576, SH),
+        this.cropFrameFromSheet(sheet,   0,  741, 384, SH),
+        this.cropFrameFromSheet(sheet, 384,  741, 384, SH),
+        this.cropFrameFromSheet(sheet, 768,  741, 384, SH),
+        this.cropFrameFromSheet(sheet,   0, 2223, 384, SH),
+        this.cropFrameFromSheet(sheet, 384, 2223, 384, SH),
+        this.cropFrameFromSheet(sheet, 768, 2223, 384, SH),
+      ]);
+      this.enemyFrames = {
+        walk_r: [wR1, wR2, wR3],
+        walk_l: [wL1, wL2, wL3],
+        idle_r: [idleR],
+        idle_l: [idleL],
+      };
+    }
 
     const candidates = this.levelData.platforms.filter(p =>
       p.theme !== "dirt_ground" &&
@@ -619,8 +615,10 @@ export class GameCore {
       });
       Matter.Composite.add(this.engine.world, [body]);
 
-      const sprite = new PIXI.Graphics();
-      this.drawEnemySprite(sprite);
+      const sprite = new PIXI.Sprite(this.enemyFrames.idle_r[0]);
+      sprite.anchor.set(0.5, 1.0);
+      const targetH = 50;
+      sprite.scale.set(targetH / 741);
       sprite.tint = this.ambientTint;
       this.worldContainer.addChild(sprite);
 
@@ -632,7 +630,9 @@ export class GameCore {
         minX: plat.x - halfW,
         maxX: plat.x + halfW,
         speed,
-        platformY: plat.y
+        platformY: plat.y,
+        animTick: 0,
+        animIndex: 0
       });
     });
 
@@ -645,22 +645,6 @@ export class GameCore {
         }
       });
     });
-  }
-
-  private drawEnemySprite(g: PIXI.Graphics) {
-    g.clear();
-    g.roundRect(-10, -16, 20, 28, 5);
-    g.fill({ color: 0x8b1a1a });
-    g.circle(0, -20, 9);
-    g.fill({ color: 0xa02020 });
-    g.circle(-3, -21, 2.5);
-    g.fill({ color: 0xffdd00 });
-    g.circle( 3, -21, 2.5);
-    g.fill({ color: 0xffdd00 });
-    g.roundRect(-9, 10, 7, 10, 2);
-    g.fill({ color: 0x5a0f0f });
-    g.roundRect( 2, 10, 7, 10, 2);
-    g.fill({ color: 0x5a0f0f });
   }
 
   private createExit() {
@@ -837,11 +821,56 @@ export class GameCore {
       if (enemy.body.position.x >= enemy.maxX) enemy.direction = -1;
       else if (enemy.body.position.x <= enemy.minX) enemy.direction = 1;
       enemy.sprite.position.set(enemy.body.position.x, enemy.body.position.y);
-      enemy.sprite.scale.x = enemy.direction;
+      
+      // Animate enemy walk cycle
+      if (Object.keys(this.enemyFrames).length > 0) {
+        enemy.animTick = (enemy.animTick || 0) + dtMs;
+        if (enemy.animTick >= 200) {
+          enemy.animTick = 0;
+          const seq = enemy.direction > 0
+            ? this.enemyFrames.walk_r
+            : this.enemyFrames.walk_l;
+          enemy.animIndex = ((enemy.animIndex || 0) + 1) % seq.length;
+          enemy.sprite.texture = seq[enemy.animIndex];
+        }
+      }
     });
 
     Matter.Engine.update(this.engine, dtMs);
     this.playerSprite.position.set(this.player.position.x, this.player.position.y);
+
+    // ── Player sprite animation ──────────────────────────────────────────────
+    if (this.playerSprite && Object.keys(this.playerFrames).length > 0) {
+      const vx = this.player.velocity.x;
+      const vy = this.player.velocity.y;
+      const facingRight = vx >= 0;
+      let newState: string;
+
+      if (!this.isGrounded) {
+        // Airborne: up phase vs peak/falling phase
+        const side = facingRight ? 'r' : 'l';
+        newState = vy < -1 ? `jump_${side}_up` : `jump_${side}_peak`;
+      } else if (Math.abs(vx) > 0.5) {
+        newState = facingRight ? 'walk_r' : 'walk_l';
+      } else {
+        newState = facingRight ? 'idle_r' : 'idle_l';
+      }
+
+      // Advance frame timer
+      this.playerAnimTick += dtMs;
+      if (newState !== this.playerAnimState) {
+        this.playerAnimState = newState;
+        this.playerAnimIndex = 0;
+        this.playerAnimTick  = 0;
+      } else if (this.playerAnimTick >= this.PLAYER_FRAME_MS) {
+        this.playerAnimTick = 0;
+        const frames = this.playerFrames[this.playerAnimState] ?? this.playerFrames.idle_r;
+        this.playerAnimIndex = (this.playerAnimIndex + 1) % frames.length;
+      }
+
+      const frames = this.playerFrames[this.playerAnimState] ?? this.playerFrames.idle_r;
+      this.playerSprite.texture = frames[this.playerAnimIndex];
+    }
 
     // ── Step sounds ──────────────────────────────────────────────────────────
     if (this.isGrounded && this.player) {
@@ -885,26 +914,23 @@ export class GameCore {
     const justLanded = this.isGrounded && !this.prevGroundedForSquash;
     this.prevGroundedForSquash = this.isGrounded;
 
+    const baseScale = 54 / 741;
     if (justLanded) {
       this.squashTimer = 160;
     }
     if (this.squashTimer > 0) {
       this.squashTimer -= dtMs;
       const t = Math.max(0, this.squashTimer / 160);
-      // Squash on land, ease back to normal
-      this.playerSprite!.scale.set(1.0 + 0.22 * t, 1.0 - 0.18 * t);
+      this.playerSprite!.scale.set(baseScale * (1.0 + 0.22 * t), baseScale * (1.0 - 0.18 * t));
     } else if (!this.isGrounded && this.player.velocity.y < -1) {
-      // Stretch when jumping upward
-      const stretch = Math.min(0.18, Math.abs(this.player.velocity.y) * 0.015);
-      this.playerSprite!.scale.set(1.0 - stretch * 0.6, 1.0 + stretch);
+      const s = Math.min(0.18, Math.abs(this.player.velocity.y) * 0.015);
+      this.playerSprite!.scale.set(baseScale * (1 - s * 0.6), baseScale * (1 + s));
     } else if (!this.isGrounded && this.player.velocity.y > 3) {
-      // Stretch when falling
-      const stretch = Math.min(0.14, this.player.velocity.y * 0.012);
-      this.playerSprite!.scale.set(1.0 - stretch * 0.5, 1.0 + stretch);
+      const s = Math.min(0.14, this.player.velocity.y * 0.012);
+      this.playerSprite!.scale.set(baseScale * (1 - s * 0.5), baseScale * (1 + s));
     } else {
-      // Lerp back to normal
-      this.playerSprite!.scale.x += (1.0 - this.playerSprite!.scale.x) * 0.25;
-      this.playerSprite!.scale.y += (1.0 - this.playerSprite!.scale.y) * 0.25;
+      const sx = this.playerSprite!.scale.x, sy = this.playerSprite!.scale.y;
+      this.playerSprite!.scale.set(sx + (baseScale - sx) * 0.25, sy + (baseScale - sy) * 0.25);
     }
 
     if (this.jumpIndicator) {
@@ -1148,4 +1174,26 @@ export class GameCore {
 
   public setMuteBg(m: boolean)  { this.audio.setMuteBg(m); }
   public setMuteSfx(m: boolean) { this.audio.setMuteSfx(m); }
+
+  private async cropFrameFromSheet(
+    sheetDataUrl: string,
+    sx: number, sy: number, sw: number, sh: number
+  ): Promise<PIXI.Texture> {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width  = sw;
+        canvas.height = sh;
+        const ctx = canvas.getContext('2d')!;
+        ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+        const dataUrl = canvas.toDataURL('image/png');
+        PIXI.Assets.load(dataUrl)
+          .then(tex => resolve(tex))
+          .catch(reject);
+      };
+      img.onerror = reject;
+      img.src = sheetDataUrl;
+    });
+  }
 }

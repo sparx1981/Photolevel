@@ -12,6 +12,17 @@ export default function HelpDialog({ isOpen, onClose }: HelpDialogProps) {
 
   const releaseNotes = [
     {
+      date: "2026-04-30",
+      changes: [
+        "Implemented high-performance Sprite Animation system for Player and Enemies.",
+        "Added Canvas-based dynamic cropping for 12-frame high-resolution sprite sheets.",
+        "Integrated multi-state animation logic: Idle, Walk, Jump (Rise vs Peak).",
+        "Optimized character visuals: Replaced procedural Graphics with hand-drawn assets.",
+        "Refined squash and stretch logic to preserve base sprite scaling (base 54/741).",
+        "Fixed enemy direction logic: direction now encoded in frame sets rather than horizontal flip."
+      ]
+    },
+    {
       date: "2026-04-29",
       changes: [
         "Implemented high-fidelity Convolver-based reverb for realistic indoor acoustics.",
@@ -182,6 +193,9 @@ export default function HelpDialog({ isOpen, onClose }: HelpDialogProps) {
                       <h3 className="text-md font-bold text-white uppercase tracking-widest opacity-50">API Usage</h3>
                       <CodeBlock 
                         code={`// Get time elapsed\nconst seconds = gameCore.getElapsedSeconds();\nconsole.log(\`Time: \${seconds}s\`);`} 
+                      />
+                      <CodeBlock 
+                        code={`// Force sprite sheet reload\n// (Internal helper usage example)\nawait gameCore.cropFrameFromSheet(sheetUrl, 0, 0, 576, 741);`} 
                       />
                     </section>
 
