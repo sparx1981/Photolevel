@@ -176,7 +176,10 @@ export class GameCore {
       // Load sprite sheets as data URLs
       const loadSheet = (path: string): Promise<string> =>
         fetch(path)
-          .then(r => r.blob())
+          .then(r => {
+            if (!r.ok) throw new Error(`[GameCore] Sprite sheet not found: ${path} (${r.status})`);
+            return r.blob();
+          })
           .then(blob => new Promise<string>((res, rej) => {
             const fr = new FileReader();
             fr.onload = () => res(fr.result as string);

@@ -1,17 +1,19 @@
 # PhotoLevel Product Specification
 
-> **Last Updated:** 2026-04-30 | **Changed:** Replaced procedural Graphics characters with a high-performance Canvas-cropped sprite animation system for player and enemies.
+> **Last Updated:** 2026-04-30 | **Changed:** Implemented dynamic level resizing to preserve photo aspect ratio and added PWA manifest for APK-ready installations. Improved mobile fullscreen robustness.
 
 ## Architecture Overview
-PhotoLevel is a browser-based 2D platformer where levels are dynamically designed by Gemini AI by identifying real-world surfaces in user-uploaded images and transforming them into playable platforms. Levels feature progressive difficulty scaling on replay.
+PhotoLevel is a browser-based 2D platformer where levels are dynamically designed by Gemini AI. The level dimensions are derived directly from the source image's natural aspect ratio, ensuring no distortion.
 
 - **Frontend:** React + Tailwind CSS
+- **PWA:** Manifest v3 + Mobile-optimised viewport settings
 - **Game Engine:** PixiJS v8
 - **Physics:** Matter.js v0.20 (Rotated slab physics)
 - **Audio:** Custom Web Audio API procedural synthesis (Ambient + SFX)
 - **AI Integration:** Hybrid pipeline using client-side Edge Detection + Google Gemini SDK.
 
 ## File Structure
+- `public/manifest.json`: PWA configuration for installable application.
 - `src/App.tsx`: Main application container, state management, and difficulty progression.
 - `src/GameCore.ts`: Primary game engine handling rotated platforms, fragile states, enemies, and camera.
 - `src/utils/audioManager.ts`: Procedural sound synthesis engine for ambient and SFX.
@@ -22,11 +24,13 @@ PhotoLevel is a browser-based 2D platformer where levels are dynamically designe
 
 ### 1. Gemini Level Designer
 - **Hybrid Pipeline:** Combines client-side edge detection with Gemini vision analysis.
+- **Dynamic Resizing:** Level dimensions are calculated from the input image (min short-side 600px) to preserve exact aspect ratio.
 - **Classification:** identify surfaces as `wood`, `stone`, `metal`, `concrete`, `tree_branch`, `dirt`, or `glass`.
 - **Theming:** Gemini generates `primaryColour`, `accentColour`, `skyTint`, and `sceneType` (audio classification).
 - **Platform Constraints:** Code-enforced limits on width (0.14 normalized) to prevent overshooting.
 
 ### 2. Physics & Gameplay
+- **Mobile Optimisation:** Robust gesture-based fullscreen triggering and viewport-fit CSS for notched mobile devices.
 - **Player Controller:** Precision movement with analogue velocity-targeting (touch) and force-based movement (keyboard).
 - **Sprite Animation:** Multi-state character system (Idle, Walk, Jump Up, Jump Peak) using 12-frame 1152x3706 sprite sheets.
   - **Dynamic Cropping:** Individual frames are extracted via hidden Canvas at runtime.

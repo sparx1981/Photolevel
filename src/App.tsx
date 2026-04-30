@@ -240,22 +240,26 @@ export default function App() {
   });
 
   useEffect(() => {
-    const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
-    if (!isMobile) return;
-
-    const requestFs = () => {
+    const tryFullscreen = () => {
       const el = document.documentElement;
       if (!document.fullscreenElement) {
-        el.requestFullscreen?.({ navigationUI: "hide" }).catch(() => {});
+        el.requestFullscreen?.({ navigationUI: 'hide' }).catch(() => {});
       }
-      window.removeEventListener("touchstart", requestFs);
-      window.removeEventListener("click", requestFs);
     };
-    window.addEventListener("touchstart", requestFs, { once: true });
-    window.addEventListener("click", requestFs, { once: true });
+
+    // Attempt immediately (works if already in PWA/standalone mode)
+    tryFullscreen();
+
+    // Re-attempt on every pointer down — these are confirmed user gestures
+    window.addEventListener('pointerdown', tryFullscreen);
+
+    // Force scroll-to-top on resize to collapse the browser's address bar
+    const onResize = () => { window.scrollTo(0, 1); };
+    window.addEventListener('resize', onResize);
+
     return () => {
-      window.removeEventListener("touchstart", requestFs);
-      window.removeEventListener("click", requestFs);
+      window.removeEventListener('pointerdown', tryFullscreen);
+      window.removeEventListener('resize', onResize);
     };
   }, []);
 
@@ -289,6 +293,13 @@ export default function App() {
     });
   };
 
+  const getImageDimensions = (dataUrl: string): Promise<{ w: number; h: number }> =>
+    new Promise((res) => {
+      const img = new Image();
+      img.onload = () => res({ w: img.naturalWidth, h: img.naturalHeight });
+      img.src = dataUrl;
+    });
+
   const startLevel = async (file: File) => {
     setState("loading");
     setDeathCount(0);
@@ -299,9 +310,10 @@ export default function App() {
       const preview = await readFileAsDataUrl(file);
       setImagePreview(preview);
       const base64 = preview.split(",")[1];
+      const { w: imgW, h: imgH } = await getImageDimensions(preview);
 
       try {
-        const data = await generateLevelFromImage(base64, file.type, preview);
+        const data = await generateLevelFromImage(base64, file.type, imgW, imgH);
         setLevelData(data);
         const sceneKey = data?.theme?.sceneType ?? "default";
         setActiveScene(SCENE_LABELS[sceneKey as keyof typeof SCENE_LABELS] ?? sceneKey);

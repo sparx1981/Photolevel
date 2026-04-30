@@ -19,7 +19,12 @@ export default function HelpDialog({ isOpen, onClose }: HelpDialogProps) {
         "Integrated multi-state animation logic: Idle, Walk, Jump (Rise vs Peak).",
         "Optimized character visuals: Replaced procedural Graphics with hand-drawn assets.",
         "Refined squash and stretch logic to preserve base sprite scaling (base 54/741).",
-        "Fixed enemy direction logic: direction now encoded in frame sets rather than horizontal flip."
+        "Fixed enemy direction logic: direction now encoded in frame sets rather than horizontal flip.",
+        "Fixed sprite loading crash with improved error reporting and manual file reconciliation.",
+        "Implemented dynamic level resizing to preserve photo aspect ratio (no more squashed photos).",
+        "Added PWA (Progressive Web App) manifest for APK-shell readiness and home-screen install.",
+        "Robustified mobile fullscreen logic using pointer-based user gestures and auto-scroll fixes.",
+        "Updated viewport meta tags and CSS to prevent accidental browser chrome reveals on iOS/Android."
       ]
     },
     {
@@ -196,6 +201,9 @@ export default function HelpDialog({ isOpen, onClose }: HelpDialogProps) {
                       />
                       <CodeBlock 
                         code={`// Force sprite sheet reload\n// (Internal helper usage example)\nawait gameCore.cropFrameFromSheet(sheetUrl, 0, 0, 576, 741);`} 
+                      />
+                      <CodeBlock 
+                        code={`// Measure natural image size for aspect-ratio level design\nconst img = new Image();\nimg.onload = () => console.log(img.naturalWidth, img.naturalHeight);\nimg.src = dataUrl;`} 
                       />
                     </section>
 

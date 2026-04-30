@@ -4,22 +4,21 @@ import { detectHorizontalEdges, DetectedLine } from "../utils/edgeDetection";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
-const LEVEL_W = 1400; // Total world width
-const LEVEL_H = 800;  // Total world height
-const MAX_PLATFORM_PX = Math.round(0.14 * LEVEL_W); // 196px hard cap
 const PLATFORM_HEIGHT_PX = 10;
 
 export function getFallbackLevel(): LevelData {
+  const FALLBACK_W = 1400;
+  const FALLBACK_H = 800;
   console.warn("[Gemini] ⚠ Using FALLBACK level — Gemini API call failed.");
   return {
-    width: LEVEL_W, height: LEVEL_H,
+    width: FALLBACK_W, height: FALLBACK_H,
     theme: {
       name: "Default", primaryColour: "#64748b", accentColour: "#3b82f6",
       skyTint: "#00000000", description: "A classic platformer level.",
       sceneType: "default"
     },
     platforms: [
-      { id:"f1", x:640,  y:706, width:1280, height:10, theme:"dirt_ground", angle:0, label:"Floor" },
+      { id:"f1", x:700,  y:706, width:1400, height:10, theme:"dirt_ground", angle:0, label:"Floor" },
       { id:"f2", x:200,  y:560, width:200,  height:10, theme:"stone_ledge", angle:0, label:"Ledge 1" },
       { id:"f3", x:480,  y:460, width:170,  height:10, theme:"stone_ledge", angle:-4, label:"Ledge 2" },
       { id:"f4", x:800,  y:510, width:180,  height:10, theme:"wooden_plank", angle:0, label:"Plank 1" },
@@ -34,11 +33,29 @@ export function getFallbackLevel(): LevelData {
 }
 
 export async function generateLevelFromImage(
-  base64Image: string,
+  base64: string,
   mimeType: string,
-  imageDataUrl: string
+  imageNaturalWidth: number,
+  imageNaturalHeight: number
 ): Promise<LevelData> {
   console.log("[Gemini] Starting hybrid edge-detect + classify pipeline...");
+
+  const imageDataUrl = `data:${mimeType};base64,${base64}`;
+
+  // Preserve image aspect ratio — scale so the shorter dimension is at least 600px
+  const MIN_SHORT = 600;
+  const aspectRatio = imageNaturalWidth / imageNaturalHeight;
+  let LEVEL_W: number, LEVEL_H: number;
+  if (aspectRatio >= 1) {
+    // Landscape or square
+    LEVEL_H = Math.max(MIN_SHORT, imageNaturalHeight);
+    LEVEL_W = Math.round(LEVEL_H * aspectRatio);
+  } else {
+    // Portrait
+    LEVEL_W = Math.max(MIN_SHORT, imageNaturalWidth);
+    LEVEL_H = Math.round(LEVEL_W / aspectRatio);
+  }
+  console.log(`[geminiService] Level size: ${LEVEL_W}×${LEVEL_H} (from image ${imageNaturalWidth}×${imageNaturalHeight})`);
 
   // ── Stage 1: Client-side edge detection (pixel-accurate) ────────────────
   let detectedLines: DetectedLine[] = [];
@@ -243,7 +260,7 @@ Return ONLY valid JSON. No explanation.`;
         model: modelName,
         contents: {
           parts: [
-            { inlineData: { data: base64Image, mimeType } },
+            { inlineData: { data: base64, mimeType } },
             { text: prompt }
           ]
         },
