@@ -15,10 +15,13 @@ export default function HelpDialog({ isOpen, onClose }: HelpDialogProps) {
       date: "2026-04-30",
       changes: [
         "Implemented high-performance Sprite Animation system for Player and Enemies.",
-        "Added Canvas-based dynamic cropping for 12-frame high-resolution sprite sheets.",
-        "Integrated multi-state animation logic: Idle, Walk, Jump (Rise vs Peak).",
+        "Added Canvas-based dynamic cropping with real-time flood-fill background removal (tolerance 40).",
+        "Integrated full Gamepad support (Xbox, PlayStation, Generic) for movement and jumping.",
+        "Normalised level scaling (800px height) to provide consistent zoom across different photo sizes.",
+        "Implemented persistent facing direction for idle animations.",
+        "Fixed sprite coordinates for idle, walk, and jump states based on precise sheet measurements.",
         "Optimized character visuals: Replaced procedural Graphics with hand-drawn assets.",
-        "Refined squash and stretch logic to preserve base sprite scaling (base 54/741).",
+        "Refined squash and stretch logic to preserve base sprite scaling (base 58/681).",
         "Fixed enemy direction logic: direction now encoded in frame sets rather than horizontal flip.",
         "Fixed sprite loading crash with improved error reporting and manual file reconciliation.",
         "Implemented dynamic level resizing to preserve photo aspect ratio (no more squashed photos).",
@@ -158,6 +161,28 @@ export default function HelpDialog({ isOpen, onClose }: HelpDialogProps) {
                         <p>3. **Survival**: Reach the green exit portal without falling into the abyss.</p>
                       </div>
                     </section>
+                    
+                    <section className="space-y-4">
+                      <h3 className="text-lg font-bold text-white uppercase tracking-wider border-l-2 border-orange-500 pl-4">Gamepad Support</h3>
+                      <div className="space-y-2 text-sm text-white/60 pl-2">
+                        <p>PhotoLevel supports Xbox, PlayStation, and Generic controllers:</p>
+                        <ul className="list-disc list-inside space-y-1">
+                          <li>**Left Stick**: Move Left/Right</li>
+                          <li>**D-Pad**: Move Left/Right</li>
+                          <li>**A Button / Cross**: Jump</li>
+                        </ul>
+                      </div>
+                    </section>
+
+                    <section className="space-y-4">
+                      <h3 className="text-lg font-bold text-white uppercase tracking-wider border-l-2 border-purple-500 pl-4">Install App</h3>
+                      <div className="space-y-2 text-sm text-white/60 pl-2">
+                        <p>Install PhotoLevel on your home screen for an APK-like experience:</p>
+                        <p>1. **iOS**: Tap "Share" and select "Add to Home Screen".</p>
+                        <p>2. **Android/Chrome**: Tap the "Install" icon in the address bar or menu.</p>
+                      </div>
+                    </section>
+
                     <section className="space-y-4 pt-4">
                       <h3 className="text-lg font-bold text-white uppercase tracking-wider border-l-2 border-green-500 pl-4">Advanced Moves</h3>
                       <div className="grid grid-cols-1 gap-3">
@@ -200,7 +225,7 @@ export default function HelpDialog({ isOpen, onClose }: HelpDialogProps) {
                         code={`// Get time elapsed\nconst seconds = gameCore.getElapsedSeconds();\nconsole.log(\`Time: \${seconds}s\`);`} 
                       />
                       <CodeBlock 
-                        code={`// Force sprite sheet reload\n// (Internal helper usage example)\nawait gameCore.cropFrameFromSheet(sheetUrl, 0, 0, 576, 741);`} 
+                        code={`// Crop frame with flood-fill background removal\n// (Targeting specific frame in measured sheet)\nawait gameCore.cropFrameFromSheet(sheetUrl, 0, 235, 576, 681);`} 
                       />
                       <CodeBlock 
                         code={`// Measure natural image size for aspect-ratio level design\nconst img = new Image();\nimg.onload = () => console.log(img.naturalWidth, img.naturalHeight);\nimg.src = dataUrl;`} 
@@ -212,6 +237,16 @@ export default function HelpDialog({ isOpen, onClose }: HelpDialogProps) {
                       <CodeBlock 
                         code={`interface LevelData {\n  platforms: { id, x, y, width, height, theme }[];\n  walls: { id, x, y, width, height, theme }[];\n  theme: { name, primaryColour, accentColour, skyTint, description };\n  spawn: { x, y };\n  exit: { x, y };\n}`} 
                       />
+                    </section>
+
+                    <section className="space-y-4">
+                      <h3 className="text-md font-bold text-white uppercase tracking-widest opacity-50">Deprecated Examples</h3>
+                      <div className="space-y-2">
+                        <p className="text-[10px] text-white/30 uppercase">Old Background Removal (Pixel-only)</p>
+                        <CodeBlock 
+                          code={`// Legacy crop (no flood-fill, old coords)\n// Deprecated: 2026-04-30\nawait gameCore.cropFrameFromSheet(sheetUrl, 0, 0, 576, 741);`} 
+                        />
+                      </div>
                     </section>
                   </div>
                 )}

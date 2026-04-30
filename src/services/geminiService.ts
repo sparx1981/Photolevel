@@ -42,20 +42,11 @@ export async function generateLevelFromImage(
 
   const imageDataUrl = `data:${mimeType};base64,${base64}`;
 
-  // Preserve image aspect ratio — scale so the shorter dimension is at least 600px
-  const MIN_SHORT = 600;
-  const aspectRatio = imageNaturalWidth / imageNaturalHeight;
-  let LEVEL_W: number, LEVEL_H: number;
-  if (aspectRatio >= 1) {
-    // Landscape or square
-    LEVEL_H = Math.max(MIN_SHORT, imageNaturalHeight);
-    LEVEL_W = Math.round(LEVEL_H * aspectRatio);
-  } else {
-    // Portrait
-    LEVEL_W = Math.max(MIN_SHORT, imageNaturalWidth);
-    LEVEL_H = Math.round(LEVEL_W / aspectRatio);
-  }
-  console.log(`[geminiService] Level size: ${LEVEL_W}×${LEVEL_H} (from image ${imageNaturalWidth}×${imageNaturalHeight})`);
+  // Always use a fixed level height for consistent screen-fill and zoom level.
+  // Width scales proportionally to preserve the image aspect ratio.
+  const LEVEL_H = 800;
+  const LEVEL_W = Math.round(LEVEL_H * (imageNaturalWidth / imageNaturalHeight));
+  console.log(`[geminiService] Level: ${LEVEL_W}×${LEVEL_H} (image was ${imageNaturalWidth}×${imageNaturalHeight}, ratio preserved)`);
 
   // ── Stage 1: Client-side edge detection (pixel-accurate) ────────────────
   let detectedLines: DetectedLine[] = [];

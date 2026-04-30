@@ -50,6 +50,8 @@ export class GameCore {
   private ambientTint = 0xffffff;
   private showDebugLabels: boolean;
   private analogueX = 0;
+  private playerFacingRight = true;
+  private gamepadIndex: number | null = null;
   private audio: AudioManager = new AudioManager();
   private prevPosX = 0;
   private airborneStartY = 0;
@@ -241,6 +243,8 @@ export class GameCore {
       window.addEventListener("keydown", this.handleKeyDown);
       window.addEventListener("keyup",   this.handleKeyUp);
       window.addEventListener("resize",  this.handleResize);
+      window.addEventListener('gamepadconnected', this.handleGamepadConnected);
+      window.addEventListener('gamepaddisconnected', this.handleGamepadDisconnected);
 
       this.app.ticker.add((ticker) => {
         try { this.update(ticker.deltaTime); }
@@ -262,6 +266,18 @@ export class GameCore {
 
   private handleKeyUp = (e: KeyboardEvent) => {
     this.keys[e.code] = false;
+  };
+
+  private handleGamepadConnected = (e: GamepadEvent) => {
+    this.gamepadIndex = e.gamepad.index;
+    console.log(`[GameCore] Gamepad connected: ${e.gamepad.id}`);
+  };
+
+  private handleGamepadDisconnected = (e: GamepadEvent) => {
+    if (e.gamepad.index === this.gamepadIndex) {
+      this.gamepadIndex = null;
+      console.log('[GameCore] Gamepad disconnected');
+    }
   };
 
   private handleResize = () => {
@@ -504,28 +520,23 @@ export class GameCore {
     });
     Matter.Composite.add(this.engine.world, [this.player]);
 
-    const SH = 741; // section height
     const sheet = this.playerSheetDataUrl;
 
-    const [idleL, idleR,
-      wL1, wL2, wL3,
-      jLup, jLpk,
-      wR1, wR2, wR3,
-      jRup, jRpk
-    ] = await Promise.all([
-      this.cropFrameFromSheet(sheet,   0,    0, 576, SH),
-      this.cropFrameFromSheet(sheet, 576,    0, 576, SH),
-      this.cropFrameFromSheet(sheet,   0,  741, 384, SH),
-      this.cropFrameFromSheet(sheet, 384,  741, 384, SH),
-      this.cropFrameFromSheet(sheet, 768,  741, 384, SH),
-      this.cropFrameFromSheet(sheet,   0, 1482, 576, SH),
-      this.cropFrameFromSheet(sheet, 576, 1482, 576, SH),
-      this.cropFrameFromSheet(sheet,   0, 2223, 384, SH),
-      this.cropFrameFromSheet(sheet, 384, 2223, 384, SH),
-      this.cropFrameFromSheet(sheet, 768, 2223, 384, SH),
-      this.cropFrameFromSheet(sheet,   0, 2964, 576, SH),
-      this.cropFrameFromSheet(sheet, 576, 2964, 576, SH),
-    ]);
+    const [idleL, idleR, wL1, wL2, wL3, jLup, jLpk, wR1, wR2, wR3, jRup, jRpk] =
+      await Promise.all([
+        this.cropFrameFromSheet(sheet,   0, 235, 576, 681),  // IDLE_L
+        this.cropFrameFromSheet(sheet, 576, 235, 576, 681),  // IDLE_R
+        this.cropFrameFromSheet(sheet,   0, 1046, 384, 550), // WALK_L_1
+        this.cropFrameFromSheet(sheet, 384, 1046, 384, 550), // WALK_L_2
+        this.cropFrameFromSheet(sheet, 768, 1046, 384, 550), // WALK_L_3
+        this.cropFrameFromSheet(sheet,   0, 1709, 576, 546), // JUMP_L_UP
+        this.cropFrameFromSheet(sheet, 576, 1709, 576, 546), // JUMP_L_PEAK
+        this.cropFrameFromSheet(sheet,   0, 2389, 384, 549), // WALK_R_1
+        this.cropFrameFromSheet(sheet, 384, 2389, 384, 549), // WALK_R_2
+        this.cropFrameFromSheet(sheet, 768, 2389, 384, 549), // WALK_R_3
+        this.cropFrameFromSheet(sheet,   0, 3052, 576, 610), // JUMP_R_UP
+        this.cropFrameFromSheet(sheet, 576, 3052, 576, 610), // JUMP_R_PEAK
+      ]);
 
     this.playerFrames = {
       idle_r:   [idleR],
@@ -544,8 +555,9 @@ export class GameCore {
     this.playerSprite.anchor.set(0.5, 1.0);
     // Scale to match physics body — body is 30×50, sprite is 576×741
     // We want the character height (~85% of frame) to be ~50px
-    const targetH = 54;
-    this.playerSprite.scale.set(targetH / SH);
+    const PLAYER_FRAME_H = 681;
+    const targetH = 58;
+    this.playerSprite.scale.set(targetH / PLAYER_FRAME_H);
     this.playerSprite.tint = this.ambientTint;
 
     // Shadow
@@ -573,17 +585,16 @@ export class GameCore {
 
     // Load enemy frames (only once — shared by all enemies)
     if (Object.keys(this.enemyFrames).length === 0) {
-      const SH = 741;
       const sheet = this.enemySheetDataUrl;
       const [idleL, idleR, wL1, wL2, wL3, wR1, wR2, wR3] = await Promise.all([
-        this.cropFrameFromSheet(sheet,   0,    0, 576, SH),
-        this.cropFrameFromSheet(sheet, 576,    0, 576, SH),
-        this.cropFrameFromSheet(sheet,   0,  741, 384, SH),
-        this.cropFrameFromSheet(sheet, 384,  741, 384, SH),
-        this.cropFrameFromSheet(sheet, 768,  741, 384, SH),
-        this.cropFrameFromSheet(sheet,   0, 2223, 384, SH),
-        this.cropFrameFromSheet(sheet, 384, 2223, 384, SH),
-        this.cropFrameFromSheet(sheet, 768, 2223, 384, SH),
+        this.cropFrameFromSheet(sheet,   0, 235, 576, 681),  // IDLE_L
+        this.cropFrameFromSheet(sheet, 576, 235, 576, 681),  // IDLE_R
+        this.cropFrameFromSheet(sheet,   0, 1046, 384, 550), // WALK_L_1
+        this.cropFrameFromSheet(sheet, 384, 1046, 384, 550), // WALK_L_2
+        this.cropFrameFromSheet(sheet, 768, 1046, 384, 550), // WALK_L_3
+        this.cropFrameFromSheet(sheet,   0, 2389, 384, 549), // WALK_R_1
+        this.cropFrameFromSheet(sheet, 384, 2389, 384, 549), // WALK_R_2
+        this.cropFrameFromSheet(sheet, 768, 2389, 384, 549), // WALK_R_3
       ]);
       this.enemyFrames = {
         walk_r: [wR1, wR2, wR3],
@@ -620,8 +631,7 @@ export class GameCore {
 
       const sprite = new PIXI.Sprite(this.enemyFrames.idle_r[0]);
       sprite.anchor.set(0.5, 1.0);
-      const targetH = 50;
-      sprite.scale.set(targetH / 741);
+      sprite.scale.set(62 / 681);
       sprite.tint = this.ambientTint;
       this.worldContainer.addChild(sprite);
 
@@ -756,6 +766,27 @@ export class GameCore {
     // Cap delta to prevent physics instability on slow frames and suppress Matter.js warning
     const dtMs = Math.min((1000 / 60) * delta, 16.667);
 
+    // ── Gamepad polling ─────────────────────────────────────────────────────
+    if (this.gamepadIndex !== null) {
+      const gp = navigator.getGamepads?.()[this.gamepadIndex];
+      if (gp) {
+        // Left stick X axis (axis 0) → analogueX
+        const stickX = gp.axes[0] ?? 0;
+        if (Math.abs(stickX) > 0.12) {
+          this.analogueX = stickX;
+        } else {
+          this.analogueX = 0;
+        }
+
+        // D-pad (buttons 12=up, 13=down, 14=left, 15=right) → keys
+        this.keys['ArrowLeft']  = (gp.buttons[14]?.pressed ?? false) || (gp.axes[0] < -0.5);
+        this.keys['ArrowRight'] = (gp.buttons[15]?.pressed ?? false) || (gp.axes[0] >  0.5);
+
+        // A button (index 0) or South button → jump
+        this.keys['Space'] = gp.buttons[0]?.pressed ?? false;
+      }
+    }
+
     this.fragilePlatforms.forEach((fp, key) => {
       switch (fp.state) {
         case "solid": {
@@ -846,17 +877,18 @@ export class GameCore {
     if (this.playerSprite && Object.keys(this.playerFrames).length > 0) {
       const vx = this.player.velocity.x;
       const vy = this.player.velocity.y;
-      const facingRight = vx >= 0;
-      let newState: string;
 
+      // Update facing direction only when actually moving
+      if (Math.abs(vx) > 0.5) this.playerFacingRight = vx > 0;
+
+      let newState: string;
       if (!this.isGrounded) {
-        // Airborne: up phase vs peak/falling phase
-        const side = facingRight ? 'r' : 'l';
+        const side = this.playerFacingRight ? 'r' : 'l';
         newState = vy < -1 ? `jump_${side}_up` : `jump_${side}_peak`;
       } else if (Math.abs(vx) > 0.5) {
-        newState = facingRight ? 'walk_r' : 'walk_l';
+        newState = this.playerFacingRight ? 'walk_r' : 'walk_l';
       } else {
-        newState = facingRight ? 'idle_r' : 'idle_l';
+        newState = this.playerFacingRight ? 'idle_r' : 'idle_l';
       }
 
       // Advance frame timer
@@ -917,7 +949,7 @@ export class GameCore {
     const justLanded = this.isGrounded && !this.prevGroundedForSquash;
     this.prevGroundedForSquash = this.isGrounded;
 
-    const baseScale = 54 / 741;
+    const baseScale = 58 / 681;
     if (justLanded) {
       this.squashTimer = 160;
     }
@@ -1161,10 +1193,14 @@ export class GameCore {
     this.audio.destroy();
     this.enemies.forEach(e => Matter.Composite.remove(this.engine.world, e.body));
     this.enemies = [];
+    this.playerFacingRight = true;
+    this.gamepadIndex = null;
     this.fragilePlatforms.clear();
     window.removeEventListener("keydown", this.handleKeyDown);
     window.removeEventListener("keyup",   this.handleKeyUp);
     window.removeEventListener("resize",  this.handleResize);
+    window.removeEventListener('gamepadconnected', this.handleGamepadConnected);
+    window.removeEventListener('gamepaddisconnected', this.handleGamepadDisconnected);
   }
 
   public setKey(code: string, value: boolean): void {
@@ -1185,17 +1221,63 @@ export class GameCore {
     return new Promise((resolve, reject) => {
       const img = new Image();
       img.onload = () => {
-        const canvas = document.createElement('canvas');
+        // Step 1: Crop the frame
+        const canvas  = document.createElement('canvas');
         canvas.width  = sw;
         canvas.height = sh;
         const ctx = canvas.getContext('2d')!;
         ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
-        const dataUrl = canvas.toDataURL('image/png');
-        PIXI.Assets.load(dataUrl)
-          .then(tex => resolve(tex))
-          .catch(reject);
+
+        // Step 2: Flood-fill background removal (tolerance 40)
+        // We assume the top-left pixel is part of the background.
+        const imageData = ctx.getImageData(0, 0, sw, sh);
+        const data = imageData.data;
+        const targetR = data[0], targetG = data[1], targetB = data[2];
+        const tolerance = 40;
+        const visited = new Uint8Array(sw * sh);
+        const queue: number[] = [0];
+        visited[0] = 1;
+
+        let head = 0;
+        while (head < queue.length) {
+          const pos = queue[head++];
+          const x = pos % sw;
+          const y = (pos / sw) | 0;
+          const i = pos * 4;
+
+          const r = data[i], g = data[i+1], b = data[i+2];
+          const dist = Math.sqrt((r - targetR)**2 + (g - targetG)**2 + (b - targetB)**2);
+
+          if (dist <= tolerance) {
+            data[i + 3] = 0; // Make transparent
+            
+            // Neighbors
+            const neighbors = [];
+            if (x > 0) neighbors.push(pos - 1);
+            if (x < sw - 1) neighbors.push(pos + 1);
+            if (y > 0) neighbors.push(pos - sw);
+            if (y < sh - 1) neighbors.push(pos + sw);
+
+            for (const n of neighbors) {
+              if (!visited[n]) {
+                visited[n] = 1;
+                queue.push(n);
+              }
+            }
+          }
+        }
+        ctx.putImageData(imageData, 0, 0);
+
+        // Step 3: Convert to PIXI texture
+        canvas.toBlob(blob => {
+          if (!blob) { reject(new Error('toBlob failed')); return; }
+          const url = URL.createObjectURL(blob);
+          PIXI.Assets.load(url)
+            .then(tex => { URL.revokeObjectURL(url); resolve(tex); })
+            .catch(reject);
+        }, 'image/png');
       };
-      img.onerror = reject;
+      img.onerror = () => reject(new Error(`Failed to load sheet`));
       img.src = sheetDataUrl;
     });
   }
