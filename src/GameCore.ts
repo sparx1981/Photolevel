@@ -1268,14 +1268,10 @@ export class GameCore {
         }
         ctx.putImageData(imageData, 0, 0);
 
-        // Step 3: Convert to PIXI texture
-        canvas.toBlob(blob => {
-          if (!blob) { reject(new Error('toBlob failed')); return; }
-          const url = URL.createObjectURL(blob);
-          PIXI.Assets.load(url)
-            .then(tex => { URL.revokeObjectURL(url); resolve(tex); })
-            .catch(reject);
-        }, 'image/png');
+        // Step 3: Convert canvas directly to a PIXI texture (avoids blob: URL parser issue in PixiJS v8)
+        const source = new PIXI.ImageSource({ resource: canvas });
+        const texture = new PIXI.Texture({ source });
+        resolve(texture);
       };
       img.onerror = () => reject(new Error(`Failed to load sheet`));
       img.src = sheetDataUrl;

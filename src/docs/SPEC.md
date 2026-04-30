@@ -1,6 +1,6 @@
 # PhotoLevel Product Specification
 
-> **Last Updated:** 2026-04-30 | **Changed:** Implemented flood-fill background removal for sprites (tolerance 40), updated measured crop coordinates for player/enemy sheets, and synchronized character scaling.
+> **Last Updated:** 2026-04-30 | **Changed:** Fixed PixiJS v8 sprite loading bug (blob URL parsing) by implementing direct ImageSource texture generation from canvas.
 
 ## Architecture Overview
 PhotoLevel is a browser-based 2D platformer where levels are dynamically designed by Gemini AI. The level dimensions are derived directly from the source image's natural aspect ratio, with a normalised height of 800px ensuring consistent scale and physics behavior across sessions.

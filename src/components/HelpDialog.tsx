@@ -14,6 +14,7 @@ export default function HelpDialog({ isOpen, onClose }: HelpDialogProps) {
     {
       date: "2026-04-30",
       changes: [
+        "Fixed critical sprite loading bug (PixiJS v8 blob URL parsing) using direct ImageSource textures.",
         "Implemented high-performance Sprite Animation system for Player and Enemies.",
         "Added Canvas-based dynamic cropping with real-time flood-fill background removal (tolerance 40).",
         "Integrated full Gamepad support (Xbox, PlayStation, Generic) for movement and jumping.",
